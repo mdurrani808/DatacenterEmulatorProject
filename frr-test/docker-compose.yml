@@ -41,16 +41,14 @@ services:
 
 networks:
   custom_net1:
-    name: custom_net1  # Explicitly name the network
+    name: custom_net1
     ipam:
-      driver: default
       config:
         - subnet: 192.168.1.0/24
-          gateway: 192.168.1.254  # Specify a gateway
+          gateway: 192.168.1.254
   custom_net2:
-    name: custom_net2  # Explicitly name the network
+    name: custom_net2
     ipam:
-      driver: default
       config:
         - subnet: 192.168.2.0/24
-          gateway: 192.168.2.254  # Specify a gateway
+          gateway: 192.168.2.254

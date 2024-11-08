@@ -25,6 +25,7 @@ services:
       - ./frr/host_a:/etc/frr
     cap_add:
       - NET_ADMIN
+      - SYS_ADMIN
     
   host_b:
     image: frrouting/frr:latest
@@ -36,6 +37,7 @@ services:
       - ./frr/host_b:/etc/frr
     cap_add:
       - NET_ADMIN
+      - SYS_ADMIN
 
 networks:
   custom_net1:

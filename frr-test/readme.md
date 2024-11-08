@@ -15,6 +15,10 @@ docker-compose up -d
 ```bash
 docker ps
 ```
+4. Tear everything down.
+```bash
+docker-compose down
+```
 
 ### BGP Status Commands
 

@@ -4,11 +4,7 @@ services:
     image: frrouting/frr:latest
     container_name: frr-router
     privileged: true
-    networks:
-      custom_net1:
-        ipv4_address: 192.168.1.2
-      custom_net2:
-        ipv4_address: 192.168.2.2
+    network_mode: "none"
     volumes:
       - ./frr/router:/etc/frr
     cap_add:
@@ -18,9 +14,7 @@ services:
   host_a:
     image: frrouting/frr:latest
     container_name: host-a
-    networks:
-      custom_net1:
-        ipv4_address: 192.168.1.1
+    network_mode: "none"
     volumes:
       - ./frr/host_a:/etc/frr
     cap_add:
@@ -30,25 +24,9 @@ services:
   host_b:
     image: frrouting/frr:latest
     container_name: host-b
-    networks:
-      custom_net2:
-        ipv4_address: 192.168.2.1
+    network_mode: "none"
     volumes:
       - ./frr/host_b:/etc/frr
     cap_add:
       - NET_ADMIN
       - SYS_ADMIN
-
-networks:
-  custom_net1:
-    name: custom_net1
-    ipam:
-      config:
-        - subnet: 192.168.1.0/24
-          gateway: 192.168.1.254
-  custom_net2:
-    name: custom_net2
-    ipam:
-      config:
-        - subnet: 192.168.2.0/24
-          gateway: 192.168.2.254

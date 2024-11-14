@@ -16,15 +16,15 @@ echo "============================================"
 
 # Test from host-a
 echo "From host-a:"
-test_ping "host-a" "192.168.1.2"  # to router via net1
-test_ping "host-a" "192.168.2.1"  # to host-b (via BGP)
+test_ping "host-a" "192.168.1.3"  # to router via net1
+test_ping "host-a" "192.168.2.2"  # to host-b (via BGP)
 
 # Test from host-b
 echo -e "\nFrom host-b:"
-test_ping "host-b" "192.168.2.2"  # to router via net2
-test_ping "host-b" "192.168.1.1"  # to host-a (via BGP)
+test_ping "host-b" "192.168.2.3"  # to router via net2
+test_ping "host-b" "192.168.1.2"  # to host-a (via BGP)
 
 # Test from router
 echo -e "\nFrom router:"
-test_ping "frr-router" "192.168.1.1"  # to host-a
-test_ping "frr-router" "192.168.2.1"  # to host-b
+test_ping "frr-router" "192.168.1.2"  # to host-a
+test_ping "frr-router" "192.168.2.2"  # to host-b

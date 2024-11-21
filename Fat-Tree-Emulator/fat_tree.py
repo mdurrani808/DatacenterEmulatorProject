@@ -18,7 +18,7 @@ class FatTree:
 
         # Storage for all nodes
         self.core_switches: List[Switch] = []
-        self.pods: List[Pod] = [Pod(i, self.num_servers_per_edge_switch) for i in range(self.num_pods)]
+        self.pods: List[Pod] = [Pod(i) for i in range(self.num_pods)]
         
         
         self.build_fat_tree()

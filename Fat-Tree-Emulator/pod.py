@@ -2,9 +2,8 @@ from typing import List
 from node import Switch, Server
 
 class Pod:
-    def __init__(self, pod_num: int, num_servers_per_edge: int):
+    def __init__(self, pod_num: int):
         self.pod_num = pod_num
-        self.num_servers_per_edge = num_servers_per_edge
         
         self.aggregation_switches: List[Switch] = []
         self.edge_switches: List[Switch] = []

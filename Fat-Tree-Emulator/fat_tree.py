@@ -1,4 +1,3 @@
-# fat_tree.py
 from typing import List, Tuple
 from node import Switch, Server, SwitchType
 from pod import Pod
@@ -123,6 +122,7 @@ class FatTree:
         self.generate_core_switches()
         self.generate_pods()
         self.connect_pods_and_core()
+        self.assign_ip_addresses()
 
 
     def print_topology(self):
@@ -151,5 +151,4 @@ class FatTree:
 
 k = 4  # For a k=4 Fat Tree
 fat_tree = FatTree(k)
-fat_tree.assign_ip_addresses()
 fat_tree.print_topology()

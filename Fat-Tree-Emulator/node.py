@@ -1,5 +1,3 @@
-
-# node.py
 from __future__ import annotations
 from enum import Enum
 
@@ -29,7 +27,12 @@ class Switch(Node):
         super().__init__(name=name, ip_address=ip_address)
         self.type = type
         self.asn = asn
+    def generate_frr_config():
+        pass
 
 class Server(Node):
     def __init__(self, name: str, ip_address: str = ""):
         super().__init__(name=name, ip_address=ip_address)
+
+    def create_namespace():
+        pass

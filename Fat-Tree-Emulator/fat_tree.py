@@ -131,30 +131,22 @@ class FatTree:
         
         print("\n--- Core Switches ---")
         for switch in self.core_switches:
-            print(f"{switch.name}:")
-            print(f"  ├─ IP: {switch.ip_address}")
-            print(f"  └─ Connections: {len(switch.connections)} nodes")
+            print(switch)
             
         for pod in self.pods:
             print(f"\n--- Pod {pod.pod_num} ---")
             
             print("Aggregation Switches:")
             for switch in pod.aggregation_switches:
-                print(f"{switch.name}:")
-                print(f"  ├─ IP: {switch.ip_address}")
-                print(f"  └─ Connections: {len(switch.connections)} nodes")
+                print(switch)
             
             print("\nEdge Switches:")
             for switch in pod.edge_switches:
-                print(f"{switch.name}:")
-                print(f"  ├─ IP: {switch.ip_address}")
-                print(f"  └─ Connections: {len(switch.connections)} nodes")
+                print(switch)
             
             print("\nServers:")
             for server in pod.servers:
-                print(f"{server.name}:")
-                print(f"  ├─ IP: {server.ip_address}")
-                print(f"  └─ Connections: {len(server.connections)} nodes")
+                print(server)
 
 
 k = 4  # For a k=4 Fat Tree

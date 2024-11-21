@@ -22,7 +22,7 @@ class Node:
                 other_node.connections.append(self)
 
     def __repr__(self):
-        return f"{self.name} (Connections: {len(self.connections)})"
+        return f"{self.name}:\n IP: {self.ip_address} \nConnections: {len(self.connections)} nodes\n"
 
 class Switch(Node):
     def __init__(self, type: SwitchType, asn: int, name: str, ip_address: str = ""):

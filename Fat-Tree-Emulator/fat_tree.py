@@ -125,7 +125,7 @@ class FatTree:
     
     def generate_configs(self):
         # clear out all the old configs
-        for folder in self.root_storage_folder.iterdir():
+        for folder in Path(self.root_storage_folder).iterdir():
             if folder.is_dir():
                 shutil.rmtree(folder)
                 
@@ -157,7 +157,7 @@ class FatTree:
         self.generate_configs()
         
         # generate docker containers for each
-        self.create_containers()
+        #self.create_containers()
         
         # create namespaces for the hosts 
         

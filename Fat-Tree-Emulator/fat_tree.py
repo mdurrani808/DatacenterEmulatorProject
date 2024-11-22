@@ -1,9 +1,11 @@
 from typing import List, Tuple
 from node import Switch, Server, SwitchType
 from pod import Pod
+from pathlib import Path
+import shutil
 
 class FatTree:
-    def __init__(self, k):
+    def __init__(self, k, config_folder):
         if k % 2 != 0:
             raise ValueError("k must be even")
             
@@ -14,7 +16,8 @@ class FatTree:
         self.num_agg_switches_per_pod = k // 2
         self.num_edge_switches_per_pod = k // 2
         self.num_servers_per_edge_switch = k // 2
-
+        self.root_storage_folder = f"{Path.cwd()}/{config_folder}"
+        
         # Storage for all nodes
         self.core_switches: List[Switch] = []
         self.pods: List[Pod] = [Pod(i) for i in range(self.num_pods)]
@@ -32,7 +35,8 @@ class FatTree:
             core_switch = Switch(
                 type=SwitchType.CORE,
                 asn=self.get_new_asn(),
-                name=f"Core-{i}"
+                name=f"Core-{i}",
+                config_base=self.root_storage_folder
             )
             self.core_switches.append(core_switch)
             
@@ -44,7 +48,8 @@ class FatTree:
                 agg_switch = Switch(
                     type=SwitchType.AGGREGATE,
                     name=f"Agg-{pod.pod_num}-{i}",
-                    asn=self.get_new_asn()
+                    asn=self.get_new_asn(),
+                    config_base=self.root_storage_folder
                 )
                 pod.aggregation_switches.append(agg_switch)
 
@@ -53,12 +58,14 @@ class FatTree:
                 edge_switch = Switch(
                     type=SwitchType.EDGE,
                     name=f"Edge-{pod.pod_num}-{i}",
-                    asn=self.get_new_asn()
+                    asn=self.get_new_asn(),
+                    config_base=self.root_storage_folder
                 )
                 pod.edge_switches.append(edge_switch)
                 for i in range(self.num_servers_per_edge_switch):
                     server = Server(
-                        name=f"Server-{pod.pod_num}-{edge_switch.name}-{i}"
+                        name=f"Server-{pod.pod_num}-{edge_switch.name}-{i}",
+                        config_base=self.root_storage_folder
                     )
                     pod.servers.append(server)
             
@@ -74,7 +81,7 @@ class FatTree:
                 
                 # Connect to aggregation switch j in each pod
                 for pod in self.pods:
-                    core_switch.add_connection(pod.aggregation_switches[j])
+                    core_switch.register_connection(pod.aggregation_switches[j])
     
     def assign_ip_addresses(self):
         """
@@ -115,7 +122,31 @@ class FatTree:
                 for server_idx, server in enumerate(connected_servers):
                     host_id = server_idx + 2  # Start from 2
                     server.ip_address = f"10.{pod.pod_num}.{edge_switch_idx}.{host_id}"
-                    
+    
+    def generate_configs(self):
+        # clear out all the old configs
+        for folder in self.root_storage_folder.iterdir():
+            if folder.is_dir():
+                shutil.rmtree(folder)
+                
+        # go one by one and generate new configs
+        for core in self.core_switches:
+            core.generate_config_folder()
+        for pod in self.pods:
+            for aggregate in pod.aggregation_switches:
+                aggregate.generate_config_folder()
+            for edge in pod.edge_switches:
+                edge.generate_config_folder()
+                
+    def create_containers(self):    
+        # go one by one and create docker containers
+        for core in self.core_switches:
+            core.create_frr_container()
+        for pod in self.pods:
+            for aggregate in pod.aggregation_switches:
+                aggregate.create_frr_container()
+            for edge in pod.edge_switches:
+                edge.create_frr_container()
 
     def build_fat_tree(self):
         """Build the complete fat tree topology"""
@@ -123,6 +154,23 @@ class FatTree:
         self.generate_pods()
         self.connect_pods_and_core()
         self.assign_ip_addresses()
+        self.generate_configs()
+        
+        # generate docker containers for each
+        self.create_containers()
+        
+        # create namespaces for the hosts 
+        
+        
+        # go through all and connect them using namespaces
+        
+        
+        # run a ping test to make sure it all works
+        
+        
+        # visualization of traffic
+        
+
 
 
     def print_topology(self):
@@ -150,5 +198,6 @@ class FatTree:
 
 
 k = 4  # For a k=4 Fat Tree
-fat_tree = FatTree(k)
+
+fat_tree = FatTree(k, "configs")
 fat_tree.print_topology()

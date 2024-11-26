@@ -4,6 +4,8 @@ import os
 import docker
 from docker.types import Mount
 from pyroute2 import IPRoute
+import subprocess
+from itertools import count
 class SwitchType(Enum):
     CORE = 1
     AGGREGATE = 2
@@ -13,38 +15,80 @@ class SwitchType(Enum):
 class Node:
     # shared across all nodes
     client = docker.from_env()
+    client.images.pull('frrouting/frr:latest')
+    client.images.pull('nicolaka/netshoot:latest')
     ip = IPRoute()
 
-    def __init__(self, name: str, config_base:str, ip_address: str = ""):
+    def __init__(self, name: str, config_base:str, base_ip_address: str = ""):
         self.name = name
-        self.ip_address = ip_address
-        self.connections = []
+        self.base_ip_address = base_ip_address # we use a default /24 subnet for everything
+        self.connections = {} # mapping between the node that the current node is connected to and the assigned ip address (internally managed to make sure that there are no repeats starting at 1.)
+        self.ip_counter = 1
         self.folder_path = f"{config_base}/{self.name}"
         self.container = None
 
+    def get_ip_counter(self):
+        """increments and returuns ip counter
+            Use this whenever ip_counter neesd to be accessed to ensure that we never have repeat ip addresses
+        Returns:
+            str: the latest ip counter value
+        """
+        ip_counter += 1
+        return str(self.ip_counter)
     def register_connection(self, other_node: Node):
         """
         Add bidirectional connection between nodes
-        NOTE: This is purely virtual, this is not creating the ethernet pair. For that, you must call create_ethernet_Pair
+        NOTE: This is purely virtual, this is not creating the ethernet pair. For that, you must call establish_veth_link
         """
         if other_node not in self.connections:
-            self.connections.append(other_node)
+            self.connections[other_node] = ""
             if self not in other_node.connections:
-                other_node.connections.append(self)
+                other_node.connections[self] = ""
     
-    def establish_veth_link(node1:Node, node2:Node):
-        node1_pid = node1.container.attrs['State']['Pid']
-        node2_pid = node2.container.attrs['State']['Pid']
+
+    def establish_veth_link(self, other_node: Node):
+        """Creates a veth pair between two containers using their stored connection IPs
         
-        #TODO: Finish this
+        Args:
+            other_node (Node): The other container to connect to
+        """
         
         
+        container1 = self.container
+        container2 = other_node.container
+        print(f"Adding veth connection between {container1.name} and {container2.name}")
+        
+        pid1 = self.client.api.inspect_container(container1.id)['State']['Pid']
+        pid2 = self.client.api.inspect_container(container2.id)['State']['Pid']
+        
+        # Create unique veth pair names using node names to avoid conflicts
+        veth1 = f"{self.name}-to-{other_node.name}"[:15]  # Linux interface names limited to 15 chars
+        veth2 = f"{other_node.name}-to-{self.name}"[:15]
+        
+        # Create the veth pair
+        subprocess.run(['sudo', 'ip', 'link', 'add', veth1, 'type', 'veth', 'peer', 'name', veth2], check=True)
+        
+        # Move interfaces to their respective network namespaces
+        subprocess.run(['sudo', 'ip', 'link', 'set', veth1, 'netns', str(pid1)], check=True)
+        subprocess.run(['sudo', 'ip', 'link', 'set', veth2, 'netns', str(pid2)], check=True)
+        
+        # Get the specific IP addresses for this connection from the connections dictionary
+        ip1 = self.connections[other_node]
+        ip2 = other_node.connections[self]
+        
+        # Configure interfaces in container1
+        container1.exec_run(f"ip addr add {ip1}/24 dev {veth1}")
+        container1.exec_run(f"ip link set {veth1} up")
+        
+        # Configure interfaces in container2
+        container2.exec_run(f"ip addr add {ip2}/24 dev {veth2}")
+        container2.exec_run(f"ip link set {veth2} up")    
     def __repr__(self):
-        return f"{self.name}:\n IP: {self.ip_address} \nConnections: {len(self.connections)} nodes\n"
+        return f"{self.name}:\n IP: {self.base_ip_address} \nConnections: {len(self.connections)} nodes\n"
 
 class Switch(Node):
-    def __init__(self, type: SwitchType, asn: int, name: str,config_base:str, ip_address: str = ""):
-        super().__init__(name=name, ip_address=ip_address, config_base=config_base)
+    def __init__(self, type: SwitchType, asn: int, name: str,config_base:str, base_ip_address: str = ""):
+        super().__init__(name=name, base_ip_address=base_ip_address, config_base=config_base)
         self.type = type
         self.asn = asn
     def generate_config_folder(self) -> None:
@@ -54,7 +98,7 @@ class Switch(Node):
         frr_conf_file.write(self.generate_frr_config())
         frr_conf_file.close()
         
-        daemon_file = open(f"{self.folder_path}/daemon", "w")
+        daemon_file = open(f"{self.folder_path}/daemons", "w")
         daemon_file.write(self.generate_daemon())
         daemon_file.close()
     
@@ -95,10 +139,10 @@ class Switch(Node):
 
         local_networks = []
         for i, connection in enumerate(self.connections):
-            ip, prefix = get_ip_and_prefix(self.ip_address)
+            ip, prefix = get_ip_and_prefix(self.base_ip_address)
             config.extend([
                 f"interface eth{i}",
-                f" ip address {self.ip_address}",
+                f" ip address {self.base_ip_address}/24",
                 "!"
             ])
             local_networks.append(get_network_address(ip, prefix))
@@ -119,7 +163,7 @@ class Switch(Node):
 
         config.extend([
             f"router bgp {self.asn}",
-            f" bgp router-id {self.ip_address.split('/')[0]}",
+            f" bgp router-id {self.base_ip_address.split('/')[0]}",
             " bgp log-neighbor-changes",
         ])
 
@@ -145,7 +189,7 @@ class Switch(Node):
 
         # neighbors
         for connection in self.connections:
-            neighbor_ip = connection.ip_address.split('/')[0]
+            neighbor_ip = connection.base_ip_address.split('/')[0]
             if isinstance(connection, Switch):
                 if self.type in [SwitchType.CORE, SwitchType.AGGREGATE]:
                     config.extend([
@@ -169,7 +213,7 @@ class Switch(Node):
         else:
             for connection in self.connections:
                 if isinstance(connection, Switch):
-                    config.append(f"  neighbor {connection.ip_address.split('/')[0]} activate")
+                    config.append(f"  neighbor {connection.base_ip_address.split('/')[0]} activate")
 
         if self.type != SwitchType.EDGE:
             config.append("  maximum-paths 64")
@@ -198,10 +242,7 @@ class Switch(Node):
                 )
             ]
         }
-        
-        # image pull
-        Node.client.images.pull('frrouting/frr:latest')
-        
+                
         # start container
         self.container = Node.client.containers.create(**container_config)
         self.container.start()
@@ -210,8 +251,24 @@ class Switch(Node):
 
 
 class Server(Node):
-    def __init__(self, name: str, config_base:str, ip_address: str = ""):
-        super().__init__(name=name, ip_address=ip_address, config_base=config_base)
-
-    def create_namespace():
-        pass
+    def __init__(self, name: str, config_base:str, base_ip_address: str = ""):
+        super().__init__(name=name, base_ip_address=base_ip_address, config_base=config_base)
+        
+    def create_container(self):
+        # Define container configuration
+        container_config = {
+            'image': 'nicolaka/netshoot:latest',
+            'name': self.name,
+            'network_mode': 'none',
+            'cap_add': ['NET_ADMIN', 'SYS_ADMIN'],
+            'privileged':True,
+            'command':"tail -f /dev/null"
+        }
+                
+        # start container
+        self.container = Node.client.containers.create(**container_config)
+        self.container.start()
+        
+        print(f"Succesfully started {self.container.name}!")
+    
+    

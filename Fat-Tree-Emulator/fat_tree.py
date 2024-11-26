@@ -115,18 +115,23 @@ class FatTree:
         for core in self.core_switches:
             for connection in core.connections.keys():
                 core.connections[connection] = core.base_ip_address + core.get_ip_counter()
+                print(core.connections[connection])
         
         for pod in self.pods:
             for agg_switch in pod.aggregation_switches:
                 for connection in agg_switch.connections.keys():
                     agg_switch.connections[connection] = agg_switch.base_ip_address + agg_switch.get_ip_counter()
+                    print(agg_switch.connections[connection])
                 
             for edge_switch in pod.edge_switches:
                 for connection in edge_switch.connections.keys():
                     edge_switch.connections[connection] = edge_switch.base_ip_address + edge_switch.get_ip_counter()
+                    print(edge_switch.connections[connection])
                 
             for host_server in pod.servers:
-                host_server.connections[connection] = host_server.base_ip_address + host_server.get_ip_counter()
+                for connection in host_server.connections.keys():
+                    host_server.connections[connection] = host_server.base_ip_address + host_server.get_ip_counter()
+                    print(host_server.connections[connection])
                 
     def generate_configs(self):
         # clear out all the old configs
@@ -190,6 +195,10 @@ class FatTree:
         self.generate_pods()
         self.connect_pods_and_core()
         self.assign_base_ip_addresses()
+        self.generate_interface_ips()
+        
+        self.print_topology()
+        
         self.generate_configs()
         
         # generate docker containers for each
@@ -209,6 +218,7 @@ class FatTree:
         print("\n--- Core Switches ---")
         for switch in self.core_switches:
             print(switch)
+            
             
         for pod in self.pods:
             print(f"\n--- Pod {pod.pod_num} ---")

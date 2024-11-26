@@ -6,6 +6,7 @@ from docker.types import Mount
 from pyroute2 import IPRoute
 import subprocess
 from itertools import count
+import time
 class SwitchType(Enum):
     CORE = 1
     AGGREGATE = 2
@@ -33,7 +34,7 @@ class Node:
         Returns:
             str: the latest ip counter value
         """
-        ip_counter += 1
+        self.ip_counter += 1
         return str(self.ip_counter)
     def register_connection(self, other_node: Node):
         """
@@ -75,6 +76,8 @@ class Node:
         # Get the specific IP addresses for this connection from the connections dictionary
         ip1 = self.connections[other_node]
         ip2 = other_node.connections[self]
+        print(f"IP 1: {ip1}")
+        print(f"IP 2: {ip2}")
         
         # Configure interfaces in container1
         container1.exec_run(f"ip addr add {ip1}/24 dev {veth1}")
@@ -83,8 +86,21 @@ class Node:
         # Configure interfaces in container2
         container2.exec_run(f"ip addr add {ip2}/24 dev {veth2}")
         container2.exec_run(f"ip link set {veth2} up")    
+        time.sleep(1)
+        print(f"\nPinging from {other_node.name} to {self.name} ({ip1})")
+        result = self.container.exec_run(f"ping -c 3 {ip1}")
+        print(result.output.decode())
+        
+        print(f"\nPinging from {self.name} to {other_node.name} ({ip2})")
+        result = self.container.exec_run(f"ping -c 3 {ip2}")
+        print(result.output.decode())
+        
+
     def __repr__(self):
-        return f"{self.name}:\n IP: {self.base_ip_address} \nConnections: {len(self.connections)} nodes\n"
+        toRet = f"{self.name}:\n IP: {self.base_ip_address} \nConnections: {len(self.connections)} nodes \n\n"
+        for key in self.connections.keys():
+            toRet += f"{key.name} -> {self.connections[key]}\n"
+        return toRet
 
 class Switch(Node):
     def __init__(self, type: SwitchType, asn: int, name: str,config_base:str, base_ip_address: str = ""):
@@ -113,21 +129,6 @@ class Switch(Node):
         return "bgpd=yes\nzebra=yes"
     
     def generate_frr_config(self) -> str:
-        """
-        Generate FRR configuration for a switch based on its type, ASN, and connections.
-        Returns a string containing the complete FRR configuration.
-        """
-        def get_ip_and_prefix(ip_addr: str) -> tuple:
-            if '/' in ip_addr:
-                return ip_addr.split('/')
-            return ip_addr, '24' # default 24
-        
-        def get_network_address(ip_addr: str, prefix_len: str) -> str:
-            ip_parts = ip_addr.split('.')
-            if prefix_len == '24':
-                return f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.0/24"
-            return f"{ip_addr}/{prefix_len}"
-
         config = [
             "frr version 8.4",
             "frr defaults traditional",
@@ -137,88 +138,59 @@ class Switch(Node):
             "!"
         ]
 
-        local_networks = []
-        for i, connection in enumerate(self.connections):
-            ip, prefix = get_ip_and_prefix(self.base_ip_address)
+        # Configure interfaces
+        for peer, ip_addr in self.connections.items():
+            veth_name = f"{self.name}-to-{peer.name}"[:15]
             config.extend([
-                f"interface eth{i}",
-                f" ip address {self.base_ip_address}/24",
+                f"interface {veth_name}",
+                f" ip address {ip_addr}/24",
                 "!"
             ])
-            local_networks.append(get_network_address(ip, prefix))
 
-        # prefix lists for local networks
-        for i, network in enumerate(local_networks):
+        # Add prefix lists for local subnets
+        for peer, ip_addr in self.connections.items():
+            subnet = '.'.join(ip_addr.split('.')[:-1]) + '.0/24'
             config.extend([
-                f"ip prefix-list LOCAL_NETS seq {(i+1)*5} permit {network}",
+                f"ip prefix-list LOCAL_NETS seq 5 permit {subnet}",
+                "!"
             ])
-        config.append("!")
 
-        #route-map for local network announcement
         config.extend([
             "route-map ANNOUNCE_LOCAL permit 10",
             " match ip address prefix-list LOCAL_NETS",
             "!"
         ])
 
+        # BGP configuration using actual interface IPs
         config.extend([
             f"router bgp {self.asn}",
-            f" bgp router-id {self.base_ip_address.split('/')[0]}",
+            f" bgp router-id {self.base_ip_address.split('.')[0]}.{self.base_ip_address.split('.')[1]}.{self.base_ip_address.split('.')[2]}.1",
             " bgp log-neighbor-changes",
+            " no bgp ebgp-requires-policy",
+            " timers bgp 3 9"
         ])
 
-        if self.type == SwitchType.EDGE:
-            config.append(" no bgp default ipv4-unicast")
-        elif self.type == SwitchType.CORE:
-            config.append(" no bgp ebgp-requires-policy")
+        # Configure neighbors using actual peer IPs
+        for peer, _ in self.connections.items():
+            if isinstance(peer, Switch):
+                peer_ip = self.connections[peer].split('/')[0]  # Use actual interface IP
+                config.extend([
+                    f" neighbor {peer_ip} remote-as {peer.asn}",
+                ])
 
-        # BGP timer configurations
+        # Address family configuration with neighbor activation
         config.extend([
-            " timers bgp 3 9",
-            "!"
-        ])
-
-        # configure peer groups based on switch type
-        if self.type in [SwitchType.CORE, SwitchType.AGGREGATE]:
-            config.extend([
-                " neighbor PEERS peer-group",
-                " neighbor PEERS advertisement-interval 0",
-                " neighbor PEERS timers connect 5",
-                "!"
-            ])
-
-        # neighbors
-        for connection in self.connections:
-            neighbor_ip = connection.base_ip_address.split('/')[0]
-            if isinstance(connection, Switch):
-                if self.type in [SwitchType.CORE, SwitchType.AGGREGATE]:
-                    config.extend([
-                        f" neighbor {neighbor_ip} peer-group PEERS",
-                        f" neighbor {neighbor_ip} remote-as {connection.asn}",
-                    ])
-                else:
-                    config.extend([
-                        f" neighbor {neighbor_ip} remote-as {connection.asn}",
-                        f" neighbor {neighbor_ip} timers connect 5",
-                    ])
-
-        config.extend([
-            " !",
             " address-family ipv4 unicast",
             "  redistribute connected route-map ANNOUNCE_LOCAL"
         ])
 
-        if self.type in [SwitchType.CORE, SwitchType.AGGREGATE]:
-            config.append("  neighbor PEERS activate")
-        else:
-            for connection in self.connections:
-                if isinstance(connection, Switch):
-                    config.append(f"  neighbor {connection.base_ip_address.split('/')[0]} activate")
-
-        if self.type != SwitchType.EDGE:
-            config.append("  maximum-paths 64")
+        for peer, _ in self.connections.items():
+            if isinstance(peer, Switch):
+                peer_ip = self.connections[peer].split('/')[0]
+                config.append(f"  neighbor {peer_ip} activate")
 
         config.extend([
+            "  maximum-paths 64",
             " exit-address-family",
             "!",
             "line vty",
@@ -226,6 +198,12 @@ class Switch(Node):
         ])
 
         return "\n".join(config)
+    def __repr__(self):
+        toRet = f"{self.name}:\n IP: {self.base_ip_address} \nConnections: {len(self.connections)} nodes\n ASN {self.asn} \n\n"
+        for key in self.connections.keys():
+            toRet += f"{key.name} -> {self.connections[key]}\n"
+        return toRet
+    
     
     def create_frr_container(self):
         # Define container configuration
@@ -233,6 +211,7 @@ class Switch(Node):
             'image': 'frrouting/frr:latest',
             'name': self.name,
             'network_mode': 'none',
+            'privileged':True,
             'cap_add': ['NET_ADMIN', 'SYS_ADMIN'],
             'mounts': [
                 Mount(

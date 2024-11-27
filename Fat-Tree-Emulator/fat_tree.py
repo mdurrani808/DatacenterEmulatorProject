@@ -8,6 +8,15 @@ import subprocess
 
 class FatTree:
     def __init__(self, k, config_folder):
+        """Intializes a fat tree
+
+        Args:
+            k (int): k parameter for fat tree, must be even
+            config_folder (str): base folder where frr routing configs will be stored
+
+        Raises:
+            ValueError: Raised if an odd k value is provided
+        """
         if k % 2 != 0:
             raise ValueError("k must be even")
             
@@ -28,6 +37,11 @@ class FatTree:
         self.build_fat_tree()
 
     def get_new_asn(self):
+        """Maintains monotonicly increasing ASN counter for all switches
+
+        Returns:
+            int: new asn number
+        """
         self.asn_counter += 1
         return self.asn_counter
     
@@ -84,49 +98,9 @@ class FatTree:
                 # Connect to aggregation switch j in each pod
                 for pod in self.pods:
                     core_switch.register_connection(pod.aggregation_switches[j])
-    
-    def assign_base_ip_addresses(self):
-        """Assigns IP address bases using the full 172.16.0.0/12 range.
-        172.16-31.x.x provides 16 second octets * 256 third octets = 4096 subnets
-        Using /30 subnets gives us 4096 * 64 = 262,144 point-to-point links
-        """
-        self.current_second_octet = 16  # Start at 172.16
-        self.current_third_octet = 0
-        self.current_fourth_octet = 0  # Will increment by 4 for each /30
-        
-        # Start each type of node in a different second octet for organization
-        # Core switches start at 172.16.x.x
-        for core in self.core_switches:
-            core.base_ip_address = f"172.{self.current_second_octet}.{self.current_third_octet}."
-            self._increment_subnet()
-        
-        self.current_second_octet = 20  # Aggregation switches start at 172.20.x.x
-        self.current_third_octet = 0
-        
-        # Assign to pods
-        for pod_num, pod in enumerate(self.pods):
-            for agg_switch in pod.aggregation_switches:
-                agg_switch.base_ip_address = f"172.{self.current_second_octet}.{self.current_third_octet}."
-                self._increment_subnet()
-            
-            for edge_switch in pod.edge_switches:
-                edge_switch.base_ip_address = f"172.{self.current_second_octet}.{self.current_third_octet}."
-                self._increment_subnet()
-            
-            for server in pod.servers:
-                server.base_ip_address = f"172.{self.current_second_octet}.{self.current_third_octet}."
-                self._increment_subnet()
-                
-    def _increment_subnet(self):
-        """Helper method to manage subnet allocation"""
-        self.current_third_octet += 1
-        if self.current_third_octet >= 256:
-            self.current_third_octet = 0
-            self.current_second_octet += 1
-            if self.current_second_octet >= 32:  # Past 172.31
-                raise ValueError("IP address space exhausted")
 
-    def generate_interface_ips(self):
+
+    def generate_ips(self):
         """Generates interface IPs for all connections using /30 subnets.
         Each connection gets its own /30 subnet with 2 usable IPs.
         """
@@ -184,24 +158,7 @@ class FatTree:
                     if server.connections[connection] == "":
                         assign_connection_ips(server, connection)
     
-    def print_interface_ips(self):
-        print("Core\n")
-        for core in self.core_switches:
-            print(core.connections.values())
-        
-        for pod in self.pods:
-            print("\nAggregation")
-            for agg_switch in pod.aggregation_switches:
-                print(agg_switch.connections.values())
-                
-            print("\nEdge")
-            for edge_switch in pod.edge_switches:
-                print(edge_switch.connections.values())
-                
-            print("\nHost")
-            for host_server in pod.servers:
-                print(host_server.connections.values())
-                
+          
     def generate_configs(self):
         # clear out all the old configs
         for folder in Path(self.root_storage_folder).iterdir():
@@ -234,22 +191,30 @@ class FatTree:
         # Connect core switches to aggregation switches
         for core_switch in self.core_switches:
             for other_node in core_switch.connections:
+                
+                # makes sure that we don't have any repeating links
                 if((core_switch.name, other_node.name) not in self.links and (other_node.name, core_switch.name) not in self.links):
                     core_switch.establish_veth_link(other_node)
                     self.links.add((core_switch.name, other_node.name))
         
         for pod in self.pods:
+            #edge connections
             for edge_switch in pod.edge_switches:
                 for other_node in edge_switch.connections:
+                    
+                    # makes sure that we don't have any repeating links (probably a better way to do this)
                     if((edge_switch.name, other_node.name) not in self.links and (other_node.name, edge_switch.name) not in self.links):
                         edge_switch.establish_veth_link(other_node)
                         self.links.add((edge_switch.name, other_node.name))
             
+            # aggregation connections
             for agg in pod.aggregation_switches:
                 for other_node in agg.connections:
                     if((agg.name, other_node.name) not in self.links and (other_node.name, agg.name) not in self.links):
                         agg.establish_veth_link(other_node)
                         self.links.add((agg.name, other_node.name))
+            
+            #server connections
             for server in pod.servers:
                 for other_node in server.connections:
                     if((server.name, other_node.name) not in self.links and (other_node.name, server.name) not in self.links):
@@ -263,10 +228,7 @@ class FatTree:
         self.generate_core_switches()
         self.generate_pods()
         self.connect_pods_and_core()
-        self.assign_base_ip_addresses()
-        self.generate_interface_ips()
-        
-                
+        self.generate_ips()
         self.generate_configs()
         
         # generate docker containers for each
@@ -276,7 +238,7 @@ class FatTree:
         self.create_veth_connections()
         
         # run a ping test to make sure it all works
-        self.single_ping()
+        self.ping_mesh()
         #self.cleanup()
         
     def cleanup(self):
@@ -334,13 +296,18 @@ class FatTree:
             print(f"An error occurred: {e}")
             raise
     
-    def single_ping(self):
-        # get two servers
-        server1 = self.pods[0].servers[0]
-        server2 = self.pods[2].servers[2]
-        
-        server1.ping_server(server2)
-        server2.ping_server(server1)
+    def ping_mesh(self):
+        """pings between each server and every other one to see if everything works correctly"""
+        serverList = []
+        for pod in self.pods:
+            serverList.extend(pod.servers)
+        for i in range(len(serverList)):
+            for j in range(len(serverList)):
+                if i != j:
+                    server1 = serverList[i]
+                    server2 = serverList[j]
+                    server1.ping_server(server2)
+                    server2.ping_server(server1)
 
     def print_topology(self):
         """Print a human-readable representation of the fat tree topology and IP assignments"""
@@ -370,4 +337,3 @@ class FatTree:
 k = 4  # For a k=4 Fat Tree
 
 fat_tree = FatTree(k, "configs")
-fat_tree.print_topology()

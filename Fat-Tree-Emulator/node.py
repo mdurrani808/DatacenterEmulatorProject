@@ -5,8 +5,7 @@ import docker
 from docker.types import Mount
 from pyroute2 import IPRoute
 import subprocess
-from itertools import count
-import time
+
 class SwitchType(Enum):
     CORE = 1
     AGGREGATE = 2
@@ -20,22 +19,13 @@ class Node:
     client.images.pull('nicolaka/netshoot:latest')
     ip = IPRoute()
 
-    def __init__(self, name: str, config_base:str, base_ip_address: str = ""):
+    def __init__(self, name: str, config_base:str):
         self.name = name
-        self.base_ip_address = base_ip_address # we use a default /24 subnet for everything
         self.connections = {} # mapping between the node that the current node is connected to and the assigned ip address (internally managed to make sure that there are no repeats starting at 1.)
         self.ip_counter = 1
         self.folder_path = f"{config_base}/{self.name}"
         self.container = None
 
-    def get_ip_counter(self):
-        """increments and returuns ip counter
-            Use this whenever ip_counter neesd to be accessed to ensure that we never have repeat ip addresses
-        Returns:
-            str: the latest ip counter value
-        """
-        self.ip_counter += 1
-        return str(self.ip_counter)
     def register_connection(self, other_node: Node):
         """
         Add bidirectional connection between nodes
@@ -57,6 +47,8 @@ class Node:
         pid2 = self.client.api.inspect_container(container2.id)['State']['Pid']
         
         # Create unique veth pair names using node names to avoid conflicts
+        
+        # we limit to 15 here because of the linux limitations
         veth1 = f"{self.name}{other_node.name}"[:15]
         veth2 = f"{other_node.name}{self.name}"[:15]
         
@@ -80,32 +72,27 @@ class Node:
         container2.exec_run(f"ip addr add {ip2}/30 dev {veth2}")
         container2.exec_run(f"ip link set {veth2} up")
         
+        # for servers we need to add a default gateway so that we actually send traffic to the switch it is connected to 
         if isinstance(self, Server):
             self.container.exec_run(f"ip route add default via {ip2}")
         elif isinstance(other_node, Server):
             other_node.container.exec_run(f"ip route add default via {ip1}")
         
-        #print(f"\nPinging from {other_node.name} to {self.name} ({ip1})")
-        #result = self.container.exec_run(f"ping -c 3 {ip1}")
-        #print(result.output.decode())
-        
-        #print(f"\nPinging from {self.name} to {other_node.name} ({ip2})")
-        #result = self.container.exec_run(f"ping -c 3 {ip2}")
-        #print(result.output.decode())
-        
 
     def __repr__(self):
-        toRet = f"{self.name}:\n IP: {self.base_ip_address} \nConnections: {len(self.connections)} nodes \n\n"
+        toRet = f"{self.name}:\n \nConnections: {len(self.connections)} nodes \n\n"
         for key in self.connections.keys():
             toRet += f"{key.name} -> {self.connections[key]}\n"
         return toRet
 
 class Switch(Node):
-    def __init__(self, type: SwitchType, asn: int, name: str,config_base:str, base_ip_address: str = ""):
-        super().__init__(name=name, base_ip_address=base_ip_address, config_base=config_base)
+    def __init__(self, type: SwitchType, asn: int, name: str,config_base:str):
+        super().__init__(name=name, config_base=config_base)
         self.type = type
         self.asn = asn
     def generate_config_folder(self) -> None:
+        """Generates config folder with frr routing and daemon file
+        """
         if not os.path.exists(self.folder_path):
             os.makedirs(self.folder_path)
         frr_conf_file = open(f"{self.folder_path}/frr.conf", "w")
@@ -139,7 +126,7 @@ class Switch(Node):
         # Configure interfaces (avoid duplicates)
         seen_interfaces = set()
         for peer, ip_addr in self.connections.items():
-            veth_name = f"{self.name}-to-{peer.name}"[:15]
+            veth_name = f"{self.name}{peer.name}"[:15]
             if veth_name not in seen_interfaces:
                 seen_interfaces.add(veth_name)
                 config.extend([
@@ -169,7 +156,7 @@ class Switch(Node):
         # BGP configuration
         config.extend([
             f"router bgp {self.asn}",
-            f" bgp router-id {self.base_ip_address.split('.')[0]}.{self.base_ip_address.split('.')[1]}.{self.base_ip_address.split('.')[2]}.1",
+            f" bgp router-id {sorted(list(self.connections.values()))[-1]}",
             " bgp log-neighbor-changes",
             " no bgp ebgp-requires-policy",
             " timers bgp 3 9"
@@ -206,7 +193,7 @@ class Switch(Node):
         return "\n".join(config)
     
     def __repr__(self):
-        toRet = f"{self.name}:\n IP: {self.base_ip_address} \nConnections: {len(self.connections)} nodes\n ASN {self.asn} \n\n"
+        toRet = f"{self.name}:\nConnections: {len(self.connections)} nodes\n ASN {self.asn} \n\n"
         for key in self.connections.keys():
             toRet += f"{key.name} -> {self.connections[key]}\n"
         return toRet
@@ -237,8 +224,8 @@ class Switch(Node):
 
 
 class Server(Node):
-    def __init__(self, name: str, config_base:str, base_ip_address: str = ""):
-        super().__init__(name=name, base_ip_address=base_ip_address, config_base=config_base)
+    def __init__(self, name: str, config_base:str):
+        super().__init__(name=name, config_base=config_base)
         
     def create_container(self):
         # Define container configuration

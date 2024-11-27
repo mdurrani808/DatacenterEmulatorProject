@@ -57,8 +57,8 @@ class Node:
         pid2 = self.client.api.inspect_container(container2.id)['State']['Pid']
         
         # Create unique veth pair names using node names to avoid conflicts
-        veth1 = f"{self.name}-to-{other_node.name}"[:15]
-        veth2 = f"{other_node.name}-to-{self.name}"[:15]
+        veth1 = f"{self.name}{other_node.name}"[:15]
+        veth2 = f"{other_node.name}{self.name}"[:15]
         
         # Create the veth pair
         subprocess.run(['sudo', 'ip', 'link', 'add', veth1, 'type', 'veth', 'peer', 'name', veth2], check=True)
@@ -79,15 +79,19 @@ class Node:
         
         container2.exec_run(f"ip addr add {ip2}/30 dev {veth2}")
         container2.exec_run(f"ip link set {veth2} up")
-        time.sleep(1)
         
-        print(f"\nPinging from {other_node.name} to {self.name} ({ip1})")
-        result = self.container.exec_run(f"ping -c 3 {ip1}")
-        print(result.output.decode())
+        if isinstance(self, Server):
+            self.container.exec_run(f"ip route add default via {ip2}")
+        elif isinstance(other_node, Server):
+            other_node.container.exec_run(f"ip route add default via {ip1}")
         
-        print(f"\nPinging from {self.name} to {other_node.name} ({ip2})")
-        result = self.container.exec_run(f"ping -c 3 {ip2}")
-        print(result.output.decode())
+        #print(f"\nPinging from {other_node.name} to {self.name} ({ip1})")
+        #result = self.container.exec_run(f"ping -c 3 {ip1}")
+        #print(result.output.decode())
+        
+        #print(f"\nPinging from {self.name} to {other_node.name} ({ip2})")
+        #result = self.container.exec_run(f"ping -c 3 {ip2}")
+        #print(result.output.decode())
         
 
     def __repr__(self):
@@ -132,24 +136,29 @@ class Switch(Node):
             "!"
         ]
 
-        # Configure interfaces with /30 subnet
+        # Configure interfaces (avoid duplicates)
+        seen_interfaces = set()
         for peer, ip_addr in self.connections.items():
             veth_name = f"{self.name}-to-{peer.name}"[:15]
-            config.extend([
-                f"interface {veth_name}",
-                f" ip address {ip_addr}/30",
-                "!"
-            ])
+            if veth_name not in seen_interfaces:
+                seen_interfaces.add(veth_name)
+                config.extend([
+                    f"interface {veth_name}",
+                    f" ip address {ip_addr}/30",
+                    "!"
+                ])
 
-        # Add prefix lists for local subnets (using /30)
+        # Add prefix lists with incrementing sequence numbers
+        seq_num = 5
         for peer, ip_addr in self.connections.items():
-            # Calculate the network address for the /30 subnet
+            # Calculate network address for /30
             ip_parts = ip_addr.split('.')
             network = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.{int(ip_parts[3]) & 0xFC}"
             config.extend([
-                f"ip prefix-list LOCAL_NETS seq 5 permit {network}/30",
+                f"ip prefix-list LOCAL_NETS seq {seq_num} permit {network}/30",
                 "!"
             ])
+            seq_num += 5
 
         config.extend([
             "route-map ANNOUNCE_LOCAL permit 10",
@@ -160,7 +169,6 @@ class Switch(Node):
         # BGP configuration
         config.extend([
             f"router bgp {self.asn}",
-            # Use first IP in the base range as router-id
             f" bgp router-id {self.base_ip_address.split('.')[0]}.{self.base_ip_address.split('.')[1]}.{self.base_ip_address.split('.')[2]}.1",
             " bgp log-neighbor-changes",
             " no bgp ebgp-requires-policy",
@@ -170,7 +178,7 @@ class Switch(Node):
         # Configure neighbors
         for peer, _ in self.connections.items():
             if isinstance(peer, Switch):
-                peer_ip = peer.connections[self]  # Use peer's IP address
+                peer_ip = peer.connections[self]
                 config.extend([
                     f" neighbor {peer_ip} remote-as {peer.asn}",
                 ])
@@ -178,6 +186,7 @@ class Switch(Node):
         # Address family configuration
         config.extend([
             " address-family ipv4 unicast",
+            "  network 0.0.0.0/0",  # Advertise default route
             "  redistribute connected route-map ANNOUNCE_LOCAL"
         ])
 
@@ -248,4 +257,28 @@ class Server(Node):
         
         print(f"Succesfully started {self.container.name}!")
     
+    def ping_server(self, other_server: Server, count: int = 3) -> bool:
+        """Pings another server in the fat tree topology
+        
+        Args:
+            other_server (Server): The server to ping
+            count (int): Number of ping attempts
+        
+        Returns:
+            bool: True if ping successful, False otherwise
+        """
+        if not self.container or not other_server.container:
+            print(f"Error: One or both containers not running")
+            return False
+            
+        # Get the IP of the other server's connection to its edge switch
+        # Since servers only have one connection, we can get the first (and only) one
+        target_ip = list(other_server.connections.values())[0]
+        
+        print(f"\nPinging from {self.name} to {other_server.name} ({target_ip})")
+        result = self.container.exec_run(f"ping -c {count} {target_ip}")
+        print(result.output.decode())
+        
+        # Check if ping was successful
+        return result.exit_code == 0
     

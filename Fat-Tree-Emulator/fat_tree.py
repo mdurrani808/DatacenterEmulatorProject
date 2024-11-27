@@ -1,8 +1,10 @@
+import time
 from typing import List, Tuple
 from node import Switch, Server, SwitchType
 from pod import Pod
 from pathlib import Path
 import shutil
+import subprocess
 
 class FatTree:
     def __init__(self, k, config_folder):
@@ -262,9 +264,7 @@ class FatTree:
         self.generate_pods()
         self.connect_pods_and_core()
         self.assign_base_ip_addresses()
-        #self.print_base_ip_addresses()
         self.generate_interface_ips()
-        #self.print_interface_ips()
         
                 
         self.generate_configs()
@@ -276,8 +276,71 @@ class FatTree:
         self.create_veth_connections()
         
         # run a ping test to make sure it all works
-        # PING MESH GOES HERE
+        self.single_ping()
+        #self.cleanup()
+        
+    def cleanup(self):
+        """
+        Stops and removes all Docker containers, deletes network namespaces,
+        and prunes Docker networks.
+        """
+        try:
+            # Get all container IDs
+            container_ids = subprocess.run(
+                ["docker", "ps", "-a", "-q"],
+                capture_output=True,
+                text=True,
+                check=True
+            ).stdout.strip()
+
+            if container_ids:
+                # Stop all containers
+                subprocess.run(
+                    ["docker", "stop"] + container_ids.split("\n"),
+                    check=True
+                )
+                
+                # Remove all containers
+                subprocess.run(
+                    ["docker", "rm"] + container_ids.split("\n"),
+                    check=True
+                )
+
+            # Get list of network namespaces
+            netns = subprocess.run(
+                ["ip", "netns"],
+                capture_output=True,
+                text=True,
+                check=True
+            ).stdout.strip()
+
+            if netns:
+                # Delete each network namespace
+                for ns in netns.split("\n"):
+                    subprocess.run(
+                        ["sudo", "ip", "netns", "delete", ns],
+                        check=True
+                    )
+
+            # Prune Docker networks
+            subprocess.run(
+                ["docker", "network", "prune", "-f"],
+                check=True
+            )
+
+            print("Cleanup completed successfully")
+
+        except subprocess.CalledProcessError as e:
+            print(f"An error occurred: {e}")
+            raise
     
+    def single_ping(self):
+        # get two servers
+        server1 = self.pods[0].servers[0]
+        server2 = self.pods[2].servers[2]
+        
+        server1.ping_server(server2)
+        server2.ping_server(server1)
 
     def print_topology(self):
         """Print a human-readable representation of the fat tree topology and IP assignments"""
@@ -304,7 +367,7 @@ class FatTree:
                 print(server)
 
 
-k = 2  # For a k=4 Fat Tree
+k = 4  # For a k=4 Fat Tree
 
 fat_tree = FatTree(k, "configs")
 fat_tree.print_topology()

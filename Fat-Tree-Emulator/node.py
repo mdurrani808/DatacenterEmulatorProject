@@ -48,13 +48,7 @@ class Node:
     
 
     def establish_veth_link(self, other_node: Node):
-        """Creates a veth pair between two containers using their stored connection IPs
-        
-        Args:
-            other_node (Node): The other container to connect to
-        """
-        
-        
+        """Creates a veth pair between two containers using their stored connection IPs"""
         container1 = self.container
         container2 = other_node.container
         print(f"Adding veth connection between {container1.name} and {container2.name}")
@@ -63,7 +57,7 @@ class Node:
         pid2 = self.client.api.inspect_container(container2.id)['State']['Pid']
         
         # Create unique veth pair names using node names to avoid conflicts
-        veth1 = f"{self.name}-to-{other_node.name}"[:15]  # Linux interface names limited to 15 chars
+        veth1 = f"{self.name}-to-{other_node.name}"[:15]
         veth2 = f"{other_node.name}-to-{self.name}"[:15]
         
         # Create the veth pair
@@ -73,20 +67,20 @@ class Node:
         subprocess.run(['sudo', 'ip', 'link', 'set', veth1, 'netns', str(pid1)], check=True)
         subprocess.run(['sudo', 'ip', 'link', 'set', veth2, 'netns', str(pid2)], check=True)
         
-        # Get the specific IP addresses for this connection from the connections dictionary
+        # Get the specific IP addresses for this connection
         ip1 = self.connections[other_node]
         ip2 = other_node.connections[self]
         print(f"IP 1: {ip1}")
         print(f"IP 2: {ip2}")
         
-        # Configure interfaces in container1
-        container1.exec_run(f"ip addr add {ip1}/24 dev {veth1}")
+        # Configure interfaces with /30 subnet mask
+        container1.exec_run(f"ip addr add {ip1}/30 dev {veth1}")
         container1.exec_run(f"ip link set {veth1} up")
         
-        # Configure interfaces in container2
-        container2.exec_run(f"ip addr add {ip2}/24 dev {veth2}")
-        container2.exec_run(f"ip link set {veth2} up")    
+        container2.exec_run(f"ip addr add {ip2}/30 dev {veth2}")
+        container2.exec_run(f"ip link set {veth2} up")
         time.sleep(1)
+        
         print(f"\nPinging from {other_node.name} to {self.name} ({ip1})")
         result = self.container.exec_run(f"ping -c 3 {ip1}")
         print(result.output.decode())
@@ -138,20 +132,22 @@ class Switch(Node):
             "!"
         ]
 
-        # Configure interfaces
+        # Configure interfaces with /30 subnet
         for peer, ip_addr in self.connections.items():
             veth_name = f"{self.name}-to-{peer.name}"[:15]
             config.extend([
                 f"interface {veth_name}",
-                f" ip address {ip_addr}/24",
+                f" ip address {ip_addr}/30",
                 "!"
             ])
 
-        # Add prefix lists for local subnets
+        # Add prefix lists for local subnets (using /30)
         for peer, ip_addr in self.connections.items():
-            subnet = '.'.join(ip_addr.split('.')[:-1]) + '.0/24'
+            # Calculate the network address for the /30 subnet
+            ip_parts = ip_addr.split('.')
+            network = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.{int(ip_parts[3]) & 0xFC}"
             config.extend([
-                f"ip prefix-list LOCAL_NETS seq 5 permit {subnet}",
+                f"ip prefix-list LOCAL_NETS seq 5 permit {network}/30",
                 "!"
             ])
 
@@ -161,24 +157,25 @@ class Switch(Node):
             "!"
         ])
 
-        # BGP configuration using actual interface IPs
+        # BGP configuration
         config.extend([
             f"router bgp {self.asn}",
+            # Use first IP in the base range as router-id
             f" bgp router-id {self.base_ip_address.split('.')[0]}.{self.base_ip_address.split('.')[1]}.{self.base_ip_address.split('.')[2]}.1",
             " bgp log-neighbor-changes",
             " no bgp ebgp-requires-policy",
             " timers bgp 3 9"
         ])
 
-        # Configure neighbors using actual peer IPs
+        # Configure neighbors
         for peer, _ in self.connections.items():
             if isinstance(peer, Switch):
-                peer_ip = self.connections[peer].split('/')[0]  # Use actual interface IP
+                peer_ip = peer.connections[self]  # Use peer's IP address
                 config.extend([
                     f" neighbor {peer_ip} remote-as {peer.asn}",
                 ])
 
-        # Address family configuration with neighbor activation
+        # Address family configuration
         config.extend([
             " address-family ipv4 unicast",
             "  redistribute connected route-map ANNOUNCE_LOCAL"
@@ -186,7 +183,7 @@ class Switch(Node):
 
         for peer, _ in self.connections.items():
             if isinstance(peer, Switch):
-                peer_ip = self.connections[peer].split('/')[0]
+                peer_ip = peer.connections[self]
                 config.append(f"  neighbor {peer_ip} activate")
 
         config.extend([
@@ -198,6 +195,7 @@ class Switch(Node):
         ])
 
         return "\n".join(config)
+    
     def __repr__(self):
         toRet = f"{self.name}:\n IP: {self.base_ip_address} \nConnections: {len(self.connections)} nodes\n ASN {self.asn} \n\n"
         for key in self.connections.keys():

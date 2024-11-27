@@ -84,54 +84,121 @@ class FatTree:
                     core_switch.register_connection(pod.aggregation_switches[j])
     
     def assign_base_ip_addresses(self):
-        """Assigns IP addresses to all nodes, assuming a /24 subnet
-        Each core switch gets 10.0.x.0/24 (x = core switch number 1-4)
-        
-        Each agg switch gets 10.pod.x.0/24 (pod = pod number, x = switch number 0-1)
-        
-        Each edge switch gets 10.pod.x.0/24 (pod = pod number, x = switch number 2-3)
-        
-        Each host gets 10.pod.x.0/24 (pod = pod number, x = switch number 4-11)
-        
-        Examples above are for when k = 4, but important idea is that there is an offset between edge, and host based on the number of the aggregation or edge. 
+        """Assigns IP address bases using the full 172.16.0.0/12 range.
+        172.16-31.x.x provides 16 second octets * 256 third octets = 4096 subnets
+        Using /30 subnets gives us 4096 * 64 = 262,144 point-to-point links
         """
+        self.current_second_octet = 16  # Start at 172.16
+        self.current_third_octet = 0
+        self.current_fourth_octet = 0  # Will increment by 4 for each /30
         
-        for i, core in enumerate(self.core_switches):
-            core.base_ip_address = f"10.0.{i}."
+        # Start each type of node in a different second octet for organization
+        # Core switches start at 172.16.x.x
+        for core in self.core_switches:
+            core.base_ip_address = f"172.{self.current_second_octet}.{self.current_third_octet}."
+            self._increment_subnet()
         
+        self.current_second_octet = 20  # Aggregation switches start at 172.20.x.x
+        self.current_third_octet = 0
+        
+        # Assign to pods
         for pod_num, pod in enumerate(self.pods):
-            for agg_num, agg_switch in enumerate(pod.aggregation_switches):
-                agg_switch.base_ip_address = f"10.{pod_num}.{agg_num}."
-                
-            edge_offset = len(pod.aggregation_switches)
-            for edge_num, edge_switch in enumerate(pod.edge_switches):
-                edge_switch.base_ip_address = f"10.{pod_num}.{edge_offset + edge_num}."
-                
-            host_offset = edge_offset + len(pod.edge_switches)
-            for host_num, host_server in enumerate(pod.servers):
-                host_server.base_ip_address = f"10.{pod_num}.{host_offset + host_num}."
+            for agg_switch in pod.aggregation_switches:
+                agg_switch.base_ip_address = f"172.{self.current_second_octet}.{self.current_third_octet}."
+                self._increment_subnet()
             
+            for edge_switch in pod.edge_switches:
+                edge_switch.base_ip_address = f"172.{self.current_second_octet}.{self.current_third_octet}."
+                self._increment_subnet()
+            
+            for server in pod.servers:
+                server.base_ip_address = f"172.{self.current_second_octet}.{self.current_third_octet}."
+                self._increment_subnet()
+                
+    def _increment_subnet(self):
+        """Helper method to manage subnet allocation"""
+        self.current_third_octet += 1
+        if self.current_third_octet >= 256:
+            self.current_third_octet = 0
+            self.current_second_octet += 1
+            if self.current_second_octet >= 32:  # Past 172.31
+                raise ValueError("IP address space exhausted")
+
     def generate_interface_ips(self):
+        """Generates interface IPs for all connections using /30 subnets.
+        Each connection gets its own /30 subnet with 2 usable IPs.
+        """
+        self.current_second_octet = 16
+        self.current_third_octet = 0
+        self.current_fourth_octet = 0
+        
+        def get_next_ip_pair():
+            """Returns a pair of IPs for a point-to-point link"""
+            # In a /30, .0 is network, .3 is broadcast, .1 and .2 are usable
+            ip1 = f"172.{self.current_second_octet}.{self.current_third_octet}.{self.current_fourth_octet + 1}"
+            ip2 = f"172.{self.current_second_octet}.{self.current_third_octet}.{self.current_fourth_octet + 2}"
+            
+            # Increment for next subnet (move by 4 for next /30)
+            self.current_fourth_octet += 4
+            if self.current_fourth_octet >= 256:
+                self.current_fourth_octet = 0
+                self.current_third_octet += 1
+                if self.current_third_octet >= 256:
+                    self.current_third_octet = 0
+                    self.current_second_octet += 1
+                    if self.current_second_octet >= 32:
+                        raise ValueError("IP address space exhausted")
+            
+            return ip1, ip2
+        
+        def assign_connection_ips(node1, node2):
+            """Helper to assign IPs to both ends of a connection"""
+            if node1.connections[node2] != "":  # Already assigned
+                return
+                
+            ip1, ip2 = get_next_ip_pair()
+            node1.connections[node2] = ip1
+            node2.connections[node1] = ip2
+        
+        # Assign IPs to core switch connections
         for core in self.core_switches:
             for connection in core.connections.keys():
-                core.connections[connection] = core.base_ip_address + core.get_ip_counter()
-                print(core.connections[connection])
+                assign_connection_ips(core, connection)
         
+        # Assign IPs to pod connections
         for pod in self.pods:
             for agg_switch in pod.aggregation_switches:
                 for connection in agg_switch.connections.keys():
-                    agg_switch.connections[connection] = agg_switch.base_ip_address + agg_switch.get_ip_counter()
-                    print(agg_switch.connections[connection])
-                
+                    if agg_switch.connections[connection] == "":
+                        assign_connection_ips(agg_switch, connection)
+            
             for edge_switch in pod.edge_switches:
                 for connection in edge_switch.connections.keys():
-                    edge_switch.connections[connection] = edge_switch.base_ip_address + edge_switch.get_ip_counter()
-                    print(edge_switch.connections[connection])
+                    if edge_switch.connections[connection] == "":
+                        assign_connection_ips(edge_switch, connection)
+            
+            for server in pod.servers:
+                for connection in server.connections.keys():
+                    if server.connections[connection] == "":
+                        assign_connection_ips(server, connection)
+    
+    def print_interface_ips(self):
+        print("Core\n")
+        for core in self.core_switches:
+            print(core.connections.values())
+        
+        for pod in self.pods:
+            print("\nAggregation")
+            for agg_switch in pod.aggregation_switches:
+                print(agg_switch.connections.values())
                 
+            print("\nEdge")
+            for edge_switch in pod.edge_switches:
+                print(edge_switch.connections.values())
+                
+            print("\nHost")
             for host_server in pod.servers:
-                for connection in host_server.connections.keys():
-                    host_server.connections[connection] = host_server.base_ip_address + host_server.get_ip_counter()
-                    print(host_server.connections[connection])
+                print(host_server.connections.values())
                 
     def generate_configs(self):
         # clear out all the old configs
@@ -195,10 +262,11 @@ class FatTree:
         self.generate_pods()
         self.connect_pods_and_core()
         self.assign_base_ip_addresses()
+        #self.print_base_ip_addresses()
         self.generate_interface_ips()
+        #self.print_interface_ips()
         
-        self.print_topology()
-        
+                
         self.generate_configs()
         
         # generate docker containers for each
@@ -208,7 +276,7 @@ class FatTree:
         self.create_veth_connections()
         
         # run a ping test to make sure it all works
-        
+        # PING MESH GOES HERE
     
 
     def print_topology(self):

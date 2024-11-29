@@ -1,10 +1,13 @@
 import time
-from typing import List, Tuple
+from typing import List
 from node import Switch, Server, SwitchType
 from pod import Pod
 from pathlib import Path
 import shutil
 import subprocess
+import networkx as nx
+from networkx.drawing.nx_agraph import to_agraph
+import pygraphviz as pgv
 
 class FatTree:
     def __init__(self, k, config_folder):
@@ -55,7 +58,9 @@ class FatTree:
                 config_base=self.root_storage_folder
             )
             self.core_switches.append(core_switch)
-            
+    
+
+    
     def generate_pods(self):
         """Generate all pods with their switches and servers"""
         for pod in self.pods:
@@ -237,9 +242,11 @@ class FatTree:
         # convert all 'connections" to veth pairs
         self.create_veth_connections()
         
-        # run a ping test to make sure it all works
-        self.ping_mesh()
-        #self.cleanup()
+        self.ping_mesh_parallel()
+        self.generate_topology_graph()
+        self.cleanup()
+     
+
         
     def cleanup(self):
         """
@@ -296,18 +303,34 @@ class FatTree:
             print(f"An error occurred: {e}")
             raise
     
-    def ping_mesh(self):
-        """pings between each server and every other one to see if everything works correctly"""
-        serverList = []
-        for pod in self.pods:
-            serverList.extend(pod.servers)
-        for i in range(len(serverList)):
-            for j in range(len(serverList)):
-                if i != j:
-                    server1 = serverList[i]
-                    server2 = serverList[j]
-                    server1.ping_server(server2)
-                    server2.ping_server(server1)
+    def ping_mesh_parallel(self):
+        servers = [server for pod in self.pods for server in pod.servers]
+        for server in servers:
+            target_ips = [
+                list(other.connections.values())[0]
+                for other in servers
+                if other.name != server.name
+            ]
+            if not target_ips:
+                continue
+                
+            # -a: show alive hosts
+            # -s: print stats
+            fping_cmd = f"fping -a -s -t 1000 -c 3 {' '.join(target_ips)}"
+            
+            print(f"\nPinging from {server.name} to all other servers:")
+            result = server.container.exec_run(fping_cmd)
+            
+            if result.exit_code != 0:
+                failed_ips = [
+                    line.split()[0] 
+                    for line in result.output.decode().strip().split('\n')
+                    if "unreachable" in line
+                ]
+                print(f"Failed to reach: {failed_ips}")
+            else:
+                print("Success!")
+        return result.exit_code == 0
 
     def print_topology(self):
         """Print a human-readable representation of the fat tree topology and IP assignments"""
@@ -332,7 +355,90 @@ class FatTree:
             print("\nServers:")
             for server in pod.servers:
                 print(server)
+    def generate_topology_graph(self):
+        """
+        Creates a visual representation of the fat tree topology and saves it as a PNG file.
+        Requires pygraphviz package.
+        """
 
+        G = nx.Graph()
+        
+        for switch in self.core_switches:
+            G.add_node(switch.name, level="core")
+            
+        for pod in self.pods:
+            for switch in pod.aggregation_switches:
+                G.add_node(switch.name, level="aggregation")
+                
+            for switch in pod.edge_switches:
+                G.add_node(switch.name, level="edge")
+                
+            for server in pod.servers:
+                G.add_node(server.name, level="server")
+        
+        # Add all edges
+        for core in self.core_switches:
+            for connection in core.connections:
+                G.add_edge(core.name, connection.name)
+        
+        for pod in self.pods:
+            for agg in pod.aggregation_switches:
+                for connection in agg.connections:
+                    G.add_edge(agg.name, connection.name)
+            
+            for edge in pod.edge_switches:
+                for connection in edge.connections:
+                    G.add_edge(edge.name, connection.name)
+        
+        A = to_agraph(G)
+        
+        A.graph_attr.update({
+            'rankdir': 'TB', 
+            'splines': 'line', 
+            'nodesep': '0.5', 
+            'ranksep': '1.0',
+            'fontname': 'Arial',
+            'bgcolor': 'white'
+        })
+        
+        A.node_attr.update({
+            'shape': 'box',
+            'style': 'filled',
+            'fontname': 'Arial',
+            'margin': '0.1'
+        })
+        
+        for node in A.nodes():
+            level = G.nodes[node]['level']
+            if level == "core":
+                node.attr.update({'fillcolor': '#FF9999', 'label': f'Core\n{node}'})
+            elif level == "aggregation":
+                node.attr.update({'fillcolor': '#99FF99', 'label': f'Agg\n{node}'})
+            elif level == "edge":
+                node.attr.update({'fillcolor': '#9999FF', 'label': f'Edge\n{node}'})
+            elif level == "server":
+                node.attr.update({'fillcolor': '#FFFF99', 'label': f'Server\n{node}'})
+        
+        for pod in self.pods:
+            pod_nodes = []
+            pod_nodes.extend([switch.name for switch in pod.aggregation_switches])
+            pod_nodes.extend([switch.name for switch in pod.edge_switches])
+            pod_nodes.extend([server.name for server in pod.servers])
+            
+            with A.subgraph(name=f'cluster_pod_{pod.pod_num}') as s:
+                s.graph_attr.update({
+                    'label': f'Pod {pod.pod_num}',
+                    'style': 'dashed',
+                    'color': 'blue',
+                    'bgcolor': '#EEEEFF'
+                })
+                for node in pod_nodes:
+                    s.add_node(node)
+        
+        A.layout(prog='dot')
+        output_file = f"fat_tree_k{self.k}_topology.png"
+        A.draw(output_file)
+        print(f"Topology graph saved as {output_file}")
 
 k = 4  # For a k=4 Fat Tree
 

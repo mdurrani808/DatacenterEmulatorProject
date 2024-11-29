@@ -11,13 +11,20 @@ class Pod:
         
         
     def connect_internal(self):
-        """Connect all switches within the pod and create servers"""
+        """Connect all switches within the pod and connect servers to their designated edge switches"""
         # Connect each edge switch to each aggregation switch
         for edge_switch in self.edge_switches:
             for agg_switch in self.aggregation_switches:
                 edge_switch.register_connection(agg_switch)
 
-        # Create and connect servers to edge switches
-        for edge_switch in self.edge_switches:
-            for server in self.servers:
+        # Connect servers to their designated edge switch
+        servers_per_edge = len(self.servers) // len(self.edge_switches)
+        
+        for edge_idx, edge_switch in enumerate(self.edge_switches):
+            start_idx = edge_idx * servers_per_edge
+            end_idx = start_idx + servers_per_edge
+            
+            # Connect only the designated servers to this edge switch
+            for server in self.servers[start_idx:end_idx]:
                 edge_switch.register_connection(server)
+                server.register_connection(edge_switch)

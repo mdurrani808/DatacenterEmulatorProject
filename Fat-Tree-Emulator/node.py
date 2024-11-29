@@ -18,6 +18,7 @@ class Node:
     client.images.pull('frrouting/frr:latest')
     client.images.pull('nicolaka/netshoot:latest')
     ip = IPRoute()
+    
 
     def __init__(self, name: str, config_base:str):
         self.name = name
@@ -25,6 +26,8 @@ class Node:
         self.ip_counter = 1
         self.folder_path = f"{config_base}/{self.name}"
         self.container = None
+      
+
 
     def register_connection(self, other_node: Node):
         """

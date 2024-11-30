@@ -1,27 +1,24 @@
-import time
+# fat_tree.py
+
+import subprocess
+import shutil
+from pathlib import Path
 from typing import List
 from node import Switch, Server, SwitchType
 from pod import Pod
-from pathlib import Path
-import shutil
-import subprocess
 import networkx as nx
 import plotly.graph_objects as go
-from networkx.drawing.nx_agraph import graphviz_layout  # Requires pygraphviz or pydot
 from networkx.drawing.nx_agraph import to_agraph
-import plotly.io as pio  # Import Plotly's IO module
-import pygraphviz as pgv
+import plotly.io as pio
 
 class FatTree:
-    def __init__(self, k, config_folder):
-        """Intializes a fat tree
+    def __init__(self, k, config_folder, message_callback=None):
+        """Initializes a fat tree.
 
         Args:
-            k (int): k parameter for fat tree, must be even
-            config_folder (str): base folder where frr routing configs will be stored
-
-        Raises:
-            ValueError: Raised if an odd k value is provided
+            k (int): k parameter for fat tree, must be even.
+            config_folder (str): Base folder where FRR routing configs will be stored.
+            message_callback (function): Function to call for emitting messages.
         """
         if k % 2 != 0:
             raise ValueError("k must be even")
@@ -39,14 +36,13 @@ class FatTree:
         self.core_switches: List[Switch] = []
         self.pods: List[Pod] = [Pod(i) for i in range(self.num_pods)]
         
-        
-        self.build_fat_tree()
+        self.message_callback = message_callback  # Assign the callback
 
     def get_new_asn(self):
-        """Maintains monotonicly increasing ASN counter for all switches
+        """Maintains monotonically increasing ASN counter for all switches
 
         Returns:
-            int: new asn number
+            int: new ASN number
         """
         self.asn_counter += 1
         return self.asn_counter
@@ -61,9 +57,8 @@ class FatTree:
                 config_base=self.root_storage_folder
             )
             self.core_switches.append(core_switch)
-    
+            self.log(f"Generated core switch: {core_switch.name}")
 
-    
     def generate_pods(self):
         """Generate all pods with their switches and servers"""
         for pod in self.pods:
@@ -76,6 +71,7 @@ class FatTree:
                     config_base=self.root_storage_folder
                 )
                 pod.aggregation_switches.append(agg_switch)
+                self.log(f"Generated aggregation switch: {agg_switch.name} in Pod {pod.pod_num}")
 
             # Create edge switches for this pod
             for i in range(self.num_edge_switches_per_pod):
@@ -86,19 +82,21 @@ class FatTree:
                     config_base=self.root_storage_folder
                 )
                 pod.edge_switches.append(edge_switch)
-                for i in range(self.num_servers_per_edge_switch):
+                self.log(f"Generated edge switch: {edge_switch.name} in Pod {pod.pod_num}")
+                for j in range(self.num_servers_per_edge_switch):
                     server = Server(
-                        name=f"S{pod.pod_num}-{edge_switch.name}-{i}",
+                        name=f"S{pod.pod_num}-{edge_switch.name}-{j}",
                         config_base=self.root_storage_folder
                     )
                     pod.servers.append(server)
+                    self.log(f"Generated server: {server.name} in Pod {pod.pod_num}")
             
             # Connect switches within the pod and create servers
             pod.connect_internal()
+            self.log(f"Connected internal switches and servers within Pod {pod.pod_num}")
 
     def connect_pods_and_core(self):
-        """Connect each core switch to one aggregation switch in each pod.
-        """
+        """Connect each core switch to one aggregation switch in each pod."""
         for i in range(self.k // 2):  # Group number
             for j in range(self.k // 2):  # Switch within group
                 core_switch = self.core_switches[i * (self.k // 2) + j]
@@ -106,7 +104,7 @@ class FatTree:
                 # Connect to aggregation switch j in each pod
                 for pod in self.pods:
                     core_switch.register_connection(pod.aggregation_switches[j])
-
+                    self.log(f"Connected Core {core_switch.name} to Aggregation {pod.aggregation_switches[j].name} in Pod {pod.pod_num}")
 
     def generate_ips(self):
         """Generates interface IPs for all connections using /30 subnets.
@@ -137,13 +135,14 @@ class FatTree:
         
         def assign_connection_ips(node1, node2):
             """Helper to assign IPs to both ends of a connection"""
-            if node1.connections[node2] != "":  # Already assigned
+            if node1.connections.get(node2, "") != "":  # Already assigned
                 return
                 
             ip1, ip2 = get_next_ip_pair()
             node1.connections[node2] = ip1
             node2.connections[node1] = ip2
-        
+            self.log(f"Assigned IPs: {node1.name} <-> {node2.name} : {ip1} <-> {ip2}")
+
         # Assign IPs to core switch connections
         for core in self.core_switches:
             for connection in core.connections.keys():
@@ -153,35 +152,38 @@ class FatTree:
         for pod in self.pods:
             for agg_switch in pod.aggregation_switches:
                 for connection in agg_switch.connections.keys():
-                    if agg_switch.connections[connection] == "":
+                    if agg_switch.connections.get(connection, "") == "":
                         assign_connection_ips(agg_switch, connection)
             
             for edge_switch in pod.edge_switches:
                 for connection in edge_switch.connections.keys():
-                    if edge_switch.connections[connection] == "":
+                    if edge_switch.connections.get(connection, "") == "":
                         assign_connection_ips(edge_switch, connection)
             
             for server in pod.servers:
                 for connection in server.connections.keys():
-                    if server.connections[connection] == "":
+                    if server.connections.get(connection, "") == "":
                         assign_connection_ips(server, connection)
-    
-          
+
     def generate_configs(self):
-        # clear out all the old configs
+        # Clear out all the old configs
         for folder in Path(self.root_storage_folder).iterdir():
             if folder.is_dir():
                 shutil.rmtree(folder)
+                self.log(f"Removed old config folder: {folder.name}")
                 
-        # go one by one and generate new configs
+        # Generate new configs
         for core in self.core_switches:
             core.generate_config_folder()
+            self.log(f"Generated config for {core.name}")
         for pod in self.pods:
             for aggregate in pod.aggregation_switches:
                 aggregate.generate_config_folder()
+                self.log(f"Generated config for {aggregate.name}")
             for edge in pod.edge_switches:
                 edge.generate_config_folder()
-                
+                self.log(f"Generated config for {edge.name}")
+
     def create_containers(self):
         """
         Creates Docker containers for all nodes in the fat tree.
@@ -193,52 +195,89 @@ class FatTree:
             for core in self.core_switches:
                 output = core.create_frr_container()
                 outputs.append(output)
+                self.log(f"Created container for {core.name}")
             for pod in self.pods:
                 for aggregate in pod.aggregation_switches:
                     output = aggregate.create_frr_container()
                     outputs.append(output)
+                    self.log(f"Created container for {aggregate.name}")
                 for edge in pod.edge_switches:
                     output = edge.create_frr_container()
                     outputs.append(output)
+                    self.log(f"Created container for {edge.name}")
                 for server in pod.servers:
                     output = server.create_container()
                     outputs.append(output)
+                    self.log(f"Created container for {server.name}")
             return "\n".join(outputs)
         except Exception as e:
+            self.log(f"Error during container creation: {str(e)}", error=True)
             return f"Error during container creation: {str(e)}"
 
     def create_veth_connections(self):
-        """
-        Creates veth pairs for all connections in the fat tree topology.
-        Returns:
-            str: Output messages.
-        """
+        """Creates veth pairs for all connections in the fat tree topology"""
         try:
-            self.create_veth_connections_method()  # Assuming the actual logic is in this method
-            return "Completed creating all veth connections."
+            # Connect core switches to aggregation switches
+            for core_switch in self.core_switches:
+                for other_node in core_switch.connections:
+                    # Avoid repeating links
+                    if((core_switch.name, other_node.name) not in self.links and (other_node.name, core_switch.name) not in self.links):
+                        core_switch.establish_veth_link(other_node)
+                        self.links.add((core_switch.name, other_node.name))
+                        self.log(f"Established veth link between {core_switch.name} and {other_node.name}")
+            
+            for pod in self.pods:
+                # Edge connections
+                for edge_switch in pod.edge_switches:
+                    for other_node in edge_switch.connections:
+                        if((edge_switch.name, other_node.name) not in self.links and (other_node.name, edge_switch.name) not in self.links):
+                            edge_switch.establish_veth_link(other_node)
+                            self.links.add((edge_switch.name, other_node.name))
+                            self.log(f"Established veth link between {edge_switch.name} and {other_node.name}")
+                
+                # Aggregation connections
+                for agg in pod.aggregation_switches:
+                    for other_node in agg.connections:
+                        if((agg.name, other_node.name) not in self.links and (other_node.name, agg.name) not in self.links):
+                            agg.establish_veth_link(other_node)
+                            self.links.add((agg.name, other_node.name))
+                            self.log(f"Established veth link between {agg.name} and {other_node.name}")
+                
+                # Server connections
+                for server in pod.servers:
+                    for other_node in server.connections:
+                        if((server.name, other_node.name) not in self.links and (other_node.name, server.name) not in self.links):
+                            server.establish_veth_link(other_node)
+                            self.links.add((server.name, other_node.name))
+                            self.log(f"Established veth link between {server.name} and {other_node.name}")
+            
+            self.log("Completed creating all veth connections")
         except Exception as e:
-            return f"Error during veth connection creation: {str(e)}"
-    
+            self.log(f"Error during veth connection creation: {str(e)}", error=True)
+
+    def log(self, message, error=False):
+        """Helper method to emit messages if a callback is provided."""
+        if self.message_callback:
+            self.message_callback(message, error=error)
+        print(message)  # Also print to server console for debugging
+
     def build_fat_tree(self):
-        """Build the complete fat tree topology"""
+        """Build the complete fat tree topology."""
+        self.cleanup()
+        self.log("Cleaned up existing Docker containers and networks.")
         self.generate_core_switches()
         self.generate_pods()
         self.connect_pods_and_core()
         self.generate_ips()
         self.generate_configs()
-        
-        # generate docker containers for each
-        # self.create_containers()
-                
-        # convert all 'connections" to veth pairs
-        # self.create_veth_connections()
-        
+        self.create_containers()
+        self.create_veth_connections()
+        # Uncomment the following lines if you want to create veth connections and other steps
         # self.ping_mesh_parallel()
-        self.generate_topology_graph_plotly()
-        self.cleanup()
-     
+        # self.generate_topology_graph_plotly()
+        # self.cleanup()
+        self.log("Fat Tree build process completed.")
 
-        
     def cleanup(self):
         """
         Stops and removes all Docker containers, deletes network namespaces,
@@ -259,12 +298,14 @@ class FatTree:
                     ["docker", "stop"] + container_ids.split("\n"),
                     check=True
                 )
+                self.log("Stopped all Docker containers.")
                 
                 # Remove all containers
                 subprocess.run(
                     ["docker", "rm"] + container_ids.split("\n"),
                     check=True
                 )
+                self.log("Removed all Docker containers.")
 
             # Get list of network namespaces
             netns = subprocess.run(
@@ -281,17 +322,19 @@ class FatTree:
                         ["sudo", "ip", "netns", "delete", ns],
                         check=True
                     )
+                    self.log(f"Deleted network namespace: {ns}")
 
             # Prune Docker networks
             subprocess.run(
                 ["docker", "network", "prune", "-f"],
                 check=True
             )
+            self.log("Pruned Docker networks.")
 
-            print("Cleanup completed successfully")
+            self.log("Cleanup completed successfully.")
 
         except subprocess.CalledProcessError as e:
-            print(f"An error occurred: {e}")
+            self.log(f"An error occurred during cleanup: {e}", error=True)
             raise
 
     def ping_mesh_parallel(self):
@@ -310,7 +353,7 @@ class FatTree:
             # -s: print stats
             fping_cmd = f"fping -a -s -t 1000 -c 3 {' '.join(target_ips)}"
 
-            print(f"\nPinging from {server.name} to all other servers:")
+            self.log(f"Pinging from {server.name} to all other servers...")
             result = server.container.exec_run(fping_cmd)
 
             if result.exit_code != 0:
@@ -320,123 +363,37 @@ class FatTree:
                     if "unreachable" in line
                 ]
                 output = f"Failed to reach: {failed_ips}"
-                print(output)
+                self.log(output)
                 all_outputs.append(f"Server {server.name}: {output}")
             else:
                 success_output = "Ping Success!"
-                print(success_output)
+                self.log(success_output)
                 all_outputs.append(f"Server {server.name}: {success_output}")
         # Return all outputs as a single string
         return "\n".join(all_outputs)
 
-
     def print_topology(self):
         """Print a human-readable representation of the fat tree topology and IP assignments"""
-        print(f"\n=== Fat Tree (k={self.k}) Topology and IP Assignments ===")
+        self.log(f"\n=== Fat Tree (k={self.k}) Topology and IP Assignments ===")
         
-        print("\n--- Core Switches ---")
+        self.log("\n--- Core Switches ---")
         for switch in self.core_switches:
-            print(switch)
-            
+            self.log(switch)
             
         for pod in self.pods:
-            print(f"\n--- Pod {pod.pod_num} ---")
+            self.log(f"\n--- Pod {pod.pod_num} ---")
             
-            print("Aggregation Switches:")
+            self.log("Aggregation Switches:")
             for switch in pod.aggregation_switches:
-                print(switch)
+                self.log(switch)
             
-            print("\nEdge Switches:")
+            self.log("\nEdge Switches:")
             for switch in pod.edge_switches:
-                print(switch)
+                self.log(switch)
             
-            print("\nServers:")
+            self.log("\nServers:")
             for server in pod.servers:
-                print(server)
-    def generate_topology_graph(self):
-        """
-        Creates a visual representation of the fat tree topology and saves it as a PNG file.
-        Requires pygraphviz package.
-        """
-
-        G = nx.Graph()
-        
-        for switch in self.core_switches:
-            G.add_node(switch.name, level="core")
-            
-        for pod in self.pods:
-            for switch in pod.aggregation_switches:
-                G.add_node(switch.name, level="aggregation")
-                
-            for switch in pod.edge_switches:
-                G.add_node(switch.name, level="edge")
-                
-            for server in pod.servers:
-                G.add_node(server.name, level="server")
-        
-        # Add all edges
-        for core in self.core_switches:
-            for connection in core.connections:
-                G.add_edge(core.name, connection.name)
-        
-        for pod in self.pods:
-            for agg in pod.aggregation_switches:
-                for connection in agg.connections:
-                    G.add_edge(agg.name, connection.name)
-            
-            for edge in pod.edge_switches:
-                for connection in edge.connections:
-                    G.add_edge(edge.name, connection.name)
-        
-        A = to_agraph(G)
-        
-        A.graph_attr.update({
-            'rankdir': 'TB', 
-            'splines': 'line', 
-            'nodesep': '0.5', 
-            'ranksep': '1.0',
-            'fontname': 'Arial',
-            'bgcolor': 'white'
-        })
-        
-        A.node_attr.update({
-            'shape': 'box',
-            'style': 'filled',
-            'fontname': 'Arial',
-            'margin': '0.1'
-        })
-        
-        for node in A.nodes():
-            level = G.nodes[node]['level']
-            if level == "core":
-                node.attr.update({'fillcolor': '#FF9999', 'label': f'Core\n{node}'})
-            elif level == "aggregation":
-                node.attr.update({'fillcolor': '#99FF99', 'label': f'Agg\n{node}'})
-            elif level == "edge":
-                node.attr.update({'fillcolor': '#9999FF', 'label': f'Edge\n{node}'})
-            elif level == "server":
-                node.attr.update({'fillcolor': '#FFFF99', 'label': f'Server\n{node}'})
-        
-        for pod in self.pods:
-            pod_nodes = []
-            pod_nodes.extend([switch.name for switch in pod.aggregation_switches])
-            pod_nodes.extend([switch.name for switch in pod.edge_switches])
-            pod_nodes.extend([server.name for server in pod.servers])
-            
-            with A.subgraph(name=f'cluster_pod_{pod.pod_num}') as s:
-                s.graph_attr.update({
-                    'label': f'Pod {pod.pod_num}',
-                    'style': 'dashed',
-                    'color': 'blue',
-                    'bgcolor': '#EEEEFF'
-                })
-                for node in pod_nodes:
-                    s.add_node(node)
-        
-        A.layout(prog='dot')
-        output_file = f"fat_tree_k{self.k}_topology.png"
-        A.draw(output_file)
-        print(f"Topology graph saved as {output_file}")
+                self.log(server)
 
     def generate_topology_graph_plotly(self):
         """
@@ -697,5 +654,74 @@ class FatTree:
         # Step 10: Save the figure as an HTML file
         output_html_file = f"fat_tree_k{self.k}_topology.html"
         fig.write_html(output_html_file, full_html=True, include_plotlyjs='cdn')
-        print(f"Topology graph saved as {output_html_file}")
+        self.log(f"Topology graph saved as {output_html_file}")
 
+    def find_server_by_name(self, name: str):
+        """Find a server by its name."""
+        for pod in self.pods:
+            for server in pod.servers:
+                if server.name == name:
+                    return server
+        return None
+
+    def ping(self, source: str, destination: str):
+        """Ping from source server to destination server.
+
+        Args:
+            source (str): Name of the source server (e.g., "S0-0-0").
+            destination (str): Name of the destination server (e.g., "S1-1-1").
+
+        Returns:
+            dict: Contains 'success' (bool) and 'output' (str) keys.
+        """
+        source_server = self.find_server_by_name(source)
+        destination_server = self.find_server_by_name(destination)
+
+        if not source_server:
+            return {'success': False, 'output': f"Source server '{source}' not found."}
+
+        if not destination_server:
+            return {'success': False, 'output': f"Destination server '{destination}' not found."}
+
+        destination_ip = destination_server.ip  # Ensure 'ip' attribute exists
+
+        # Execute ping inside source server's container
+        try:
+            # Example: ping -c 4 destination_ip
+            result = source_server.container.exec_run(f"ping -c 4 {destination_ip}", stdout=True, stderr=True)
+            output = result.output.decode()
+            success = result.exit_code == 0
+            return {'success': success, 'output': output}
+        except Exception as e:
+            return {'success': False, 'output': str(e)}
+
+    def traceroute(self, source: str, destination: str):
+        """Traceroute from source server to destination server.
+
+        Args:
+            source (str): Name of the source server (e.g., "S0-0-0").
+            destination (str): Name of the destination server (e.g., "S1-1-1").
+
+        Returns:
+            dict: Contains 'success' (bool) and 'output' (str) keys.
+        """
+        source_server = self.find_server_by_name(source)
+        destination_server = self.find_server_by_name(destination)
+
+        if not source_server:
+            return {'success': False, 'output': f"Source server '{source}' not found."}
+
+        if not destination_server:
+            return {'success': False, 'output': f"Destination server '{destination}' not found."}
+
+        destination_ip = destination_server.ip  # Ensure 'ip' attribute exists
+
+        # Execute traceroute inside source server's container
+        try:
+            # Example: traceroute destination_ip
+            result = source_server.container.exec_run(f"traceroute {destination_ip}", stdout=True, stderr=True)
+            output = result.output.decode()
+            success = result.exit_code == 0
+            return {'success': success, 'output': output}
+        except Exception as e:
+            return {'success': False, 'output': str(e)}

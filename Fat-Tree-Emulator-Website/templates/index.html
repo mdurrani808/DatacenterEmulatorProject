@@ -1,20 +1,38 @@
 <!-- templates/index.html -->
 
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
     <title>Fat Tree Topology Generator</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding-top: 50px;
+        }
+        form {
+            display: inline-block;
+            text-align: left;
+        }
+        label, input {
+            display: block;
+            margin: 10px 0;
+        }
+        input[type="number"] {
+            width: 100%;
+            padding: 8px;
+        }
+        input[type="submit"] {
+            padding: 10px 20px;
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Fat Tree Topology Generator</h1>
-        <form action="{{ url_for('generate_topology') }}" method="post">
-            <label for="k">Enter value of k (even number):</label>
-            <input type="number" id="k" name="k" min="2" step="2" required>
-            <button type="submit">Generate Topology</button>
-        </form>
-    </div>
+    <h1>Fat Tree Topology Generator</h1>
+    <form action="{{ url_for('generate_topology') }}" method="post">
+        <label for="k">Enter value of k (even integer):</label>
+        <input type="number" id="k" name="k" min="2" step="2" required>
+        <input type="submit" value="Generate Topology">
+    </form>
 </body>
 </html>

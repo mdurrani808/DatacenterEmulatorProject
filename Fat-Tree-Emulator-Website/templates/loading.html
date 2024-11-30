@@ -1,0 +1,133 @@
+<!-- templates/loading.html -->
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Building Topology...</title>
+    <!-- Correct Socket.IO script without integrity attribute -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.min.js" crossorigin="anonymous"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding-top: 50px;
+        }
+        #progress-container {
+            width: 80%;
+            margin: 20px auto;
+            background-color: #f3f3f3;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        #progress-bar {
+            width: 0%;
+            height: 20px;
+            background-color: #4CAF50;
+            border-radius: 5px;
+        }
+        #messages {
+            width: 80%;
+            height: 400px;
+            margin: 20px auto;
+            border: 1px solid #ccc;
+            overflow-y: scroll;
+            padding: 10px;
+            text-align: left;
+            background-color: #f9f9f9;
+        }
+        .error {
+            color: red;
+        }
+        .complete {
+            color: green;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>Building Fat Tree Topology...</h1>
+    <!-- Progress Bar -->
+    <div id="progress-container">
+        <div id="progress-bar"></div>
+    </div>
+    <!-- Messages Container -->
+    <div id="messages"></div>
+    <script>
+        var socket = io();
+
+        // Extract session_id from the template variables
+        var session_id = "{{ session_id }}";
+
+        socket.on('connect', function() {
+            console.log('Connected to server');
+            // Join the specific room
+            socket.emit('join', {'session_id': session_id});
+        });
+
+        socket.on('joined', function(data) {
+            console.log(data.message);
+            var messagesDiv = document.getElementById('messages');
+            var p = document.createElement('p');
+            p.innerHTML = data.message;
+            messagesDiv.appendChild(p);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        });
+
+        socket.on('build_status', function(data) {
+            console.log('Received build_status:', data);
+            var messagesDiv = document.getElementById('messages');
+            var progressBar = document.getElementById('progress-bar');
+            var p = document.createElement('p');
+
+            if (data.error) {
+                p.classList.add('error');
+            }
+            if (data.complete) {
+                p.classList.add('complete');
+                progressBar.style.width = '100%';
+            }
+
+            p.innerHTML = data.message;  // Use innerHTML to render HTML content if needed
+            messagesDiv.appendChild(p);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+            // Optional: Update progress bar based on messages or predefined steps
+            // For example, increase width by a fixed percentage
+            if (!data.error && !data.complete) {
+                var currentWidth = parseInt(progressBar.style.width);
+                if (currentWidth < 90) {  // Prevent reaching 100% before completion
+                    progressBar.style.width = (currentWidth + 5) + '%';
+                }
+            }
+
+            if (data.complete) {
+                // Redirect to view topology after a short delay
+                setTimeout(function() {
+                    window.location.href = "{{ url_for('view_topology', filename=filename) }}";
+                }, 2000);
+            }
+        });
+
+        socket.on('disconnect', function() {
+            console.log('Disconnected from server');
+            var messagesDiv = document.getElementById('messages');
+            var p = document.createElement('p');
+            p.classList.add('error');
+            p.innerHTML = "Disconnected from server.";
+            messagesDiv.appendChild(p);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        });
+
+        // Handle connection errors
+        socket.on('connect_error', function(error) {
+            console.error('Connection Error:', error);
+            var messagesDiv = document.getElementById('messages');
+            var p = document.createElement('p');
+            p.classList.add('error');
+            p.innerHTML = "Connection Error: Unable to connect to the server.";
+            messagesDiv.appendChild(p);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        });
+    </script>
+</body>
+</html>

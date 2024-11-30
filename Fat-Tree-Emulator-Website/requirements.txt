@@ -5,3 +5,5 @@ networkx==3.4.2
 Flask==2.2.3
 Werkzeug==2.2.3
 plotly==5.24.1
+Flask-SocketIO==5.4.1
+eventlet==0.38.0

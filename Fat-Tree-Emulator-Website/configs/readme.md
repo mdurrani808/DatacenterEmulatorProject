@@ -1,1 +1,0 @@
-Configs for fat_tree.py

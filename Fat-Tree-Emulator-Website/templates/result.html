@@ -1,0 +1,70 @@
+<!-- templates/result.html -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Fat Tree Topology Result</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script>
+        // ... [Existing JavaScript functions] ...
+
+        async function populateTracerouteSourceOptions() {
+            const servers = await fetchServerNames();
+            const tracerouteSourceSelect = document.getElementById('traceroute-source');
+
+            servers.forEach(server => {
+                const option = document.createElement('option');
+                option.value = server;
+                option.text = server;
+                tracerouteSourceSelect.appendChild(option);
+            });
+        }
+
+        window.onload = async function() {
+            await populateServerOptions();
+            await populateTracerouteSourceOptions();
+        };
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>Fat Tree Topology</h1>
+        <iframe src="{{ url_for('topology_file', filename=filename) }}" width="100%" height="800px" title="Fat Tree Topology"></iframe>
+
+        <h2>Ping Between Servers</h2>
+        <div class="ping-form">
+            <label for="ping-source">Source Server:</label>
+            <select id="ping-source" name="source" required>
+                <option value="" disabled selected>Select Source</option>
+            </select>
+
+            <label for="ping-destination">Destination Server:</label>
+            <select id="ping-destination" name="destination" required>
+                <option value="" disabled selected>Select Destination</option>
+            </select>
+
+            <button onclick="performPing()">Ping</button>
+        </div>
+        <pre id="ping-result"></pre>
+
+        <h2>Traceroute</h2>
+        <div class="traceroute-form">
+            <label for="traceroute-source">Source Server:</label>
+            <select id="traceroute-source" name="source" required>
+                <option value="" disabled selected>Select Source</option>
+            </select>
+
+            <label for="traceroute-destination">Destination Server:</label>
+            <select id="traceroute-destination" name="destination" required>
+                <option value="" disabled selected>Select Destination</option>
+            </select>
+
+            <button onclick="performTraceroute()">Traceroute</button>
+        </div>
+        <pre id="traceroute-result"></pre>
+
+        <a href="{{ url_for('index') }}">Generate Another Topology</a>
+    </div>
+</body>
+</html>

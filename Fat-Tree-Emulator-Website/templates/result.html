@@ -7,23 +7,50 @@
     <title>Fat Tree Topology Result</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <script>
-        // ... [Existing JavaScript functions] ...
+        // Store session_id in a JavaScript variable
+        var session_id = "{{ session_id }}";
 
-        async function populateTracerouteSourceOptions() {
+        async function fetchServerNames() {
+            try {
+                const response = await fetch(`/get_servers/${session_id}`);
+                const data = await response.json();
+                if (response.ok) {
+                    return data.servers;
+                } else {
+                    console.error("Error fetching servers:", data.error);
+                    return [];
+                }
+            } catch (error) {
+                console.error("Fetch error:", error);
+                return [];
+            }
+        }
+
+        async function populateServerOptions() {
             const servers = await fetchServerNames();
+            const pingSourceSelect = document.getElementById('ping-source');
+            const pingDestinationSelect = document.getElementById('ping-destination');
             const tracerouteSourceSelect = document.getElementById('traceroute-source');
+            const tracerouteDestinationSelect = document.getElementById('traceroute-destination');
 
             servers.forEach(server => {
-                const option = document.createElement('option');
-                option.value = server;
-                option.text = server;
-                tracerouteSourceSelect.appendChild(option);
+                const option1 = document.createElement('option');
+                option1.value = server;
+                option1.text = server;
+                pingSourceSelect.appendChild(option1.cloneNode(true));
+                tracerouteSourceSelect.appendChild(option1.cloneNode(true));
+
+                const option2 = document.createElement('option');
+                option2.value = server;
+                option2.text = server;
+                pingDestinationSelect.appendChild(option2.cloneNode(true));
+                tracerouteDestinationSelect.appendChild(option2.cloneNode(true));
             });
         }
 
         window.onload = async function() {
             await populateServerOptions();
-            await populateTracerouteSourceOptions();
+            console.log("Server options populated:", session_id);
         };
     </script>
 </head>
@@ -64,7 +91,121 @@
         </div>
         <pre id="traceroute-result"></pre>
 
+        <button onclick="performCleanup()">Cleanup</button>
+
         <a href="{{ url_for('index') }}">Generate Another Topology</a>
     </div>
+
+    <script>
+        // Perform Ping
+        async function performPing() {
+            const source = document.getElementById('ping-source').value;
+            const destination = document.getElementById('ping-destination').value;
+            const resultPre = document.getElementById('ping-result');
+
+            if (!source || !destination) {
+                alert("Please select both source and destination servers.");
+                return;
+            }
+
+            resultPre.textContent = "Pinging...";
+            try {
+                const response = await fetch('/ping', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        session_id: session_id,
+                        source: source,
+                        destination: destination
+                    })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    if (data.success) {
+                        resultPre.textContent = data.output;
+                    } else {
+                        resultPre.textContent = "Ping failed:\n" + data.output;
+                    }
+                } else {
+                    resultPre.textContent = "Error: " + data.error;
+                }
+            } catch (error) {
+                console.error("Ping error:", error);
+                resultPre.textContent = "An error occurred while performing ping.";
+            }
+        }
+
+        // Perform Traceroute
+        async function performTraceroute() {
+            const source = document.getElementById('traceroute-source').value;
+            const destination = document.getElementById('traceroute-destination').value;
+            const resultPre = document.getElementById('traceroute-result');
+
+            if (!source || !destination) {
+                alert("Please select both source and destination servers.");
+                return;
+            }
+
+            resultPre.textContent = "Tracerouting...";
+            try {
+                const response = await fetch('/traceroute', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        session_id: session_id,
+                        source: source,
+                        destination: destination
+                    })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    if (data.success) {
+                        resultPre.textContent = data.output;
+                    } else {
+                        resultPre.textContent = "Traceroute failed:\n" + data.output;
+                    }
+                } else {
+                    resultPre.textContent = "Error: " + data.error;
+                }
+            } catch (error) {
+                console.error("Traceroute error:", error);
+                resultPre.textContent = "An error occurred while performing traceroute.";
+            }
+        }
+
+        // Perform Cleanup
+        async function performCleanup() {
+            const confirmation = confirm("Are you sure you want to cleanup the Fat Tree instance? This will remove all Docker containers and networks associated with this session.");
+            if (!confirmation) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/cleanup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        session_id: session_id
+                    })
+                });
+                const data = await response.json();
+                if (response.ok && data.success) {
+                    alert("Cleanup completed successfully.");
+                    window.location.href = "{{ url_for('index') }}";
+                } else {
+                    alert("Cleanup failed: " + data.message);
+                }
+            } catch (error) {
+                console.error("Cleanup error:", error);
+                alert("An error occurred during cleanup.");
+            }
+        }
+    </script>
 </body>
 </html>

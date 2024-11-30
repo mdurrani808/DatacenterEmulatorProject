@@ -1,11 +1,11 @@
-# Fat-Tree-Emulator
+# Fat-Tree-Emulator-Website
 
 ## Set up (Tested on fresh Ubuntu 22.04 VM)
 
 Clone this repository
 ```bash
 git clone https://github.com/mdurrani808/DatacenterEmulatorProject.git
-cd DatacenterEmulatorProject/Fat-Tree-Emulator
+cd DatacenterEmulatorProject/Fat-Tree-Emulator-Website
 ```
 
 Install necessary packages
@@ -23,14 +23,16 @@ sudo usermod -aG docker $USER
 Log out and login again
 
 ```bash
-cd DatacenterEmulatorProject/Fat-Tree-Emulator
+cd DatacenterEmulatorProject/Fat-Tree-Emulator-Website
 ```
 
 Run the code
 
 ```bash
-python3 fat_tree.py
+python3 app.py
 ```
+
+You can now access the website at port `5000`
 
 ## To clean everything up:
 

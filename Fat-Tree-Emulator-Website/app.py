@@ -44,8 +44,8 @@ def generate_topology():
     config_folder = f"configs/configs_k{k}"
     if not os.path.exists("configs"):
         os.makedirs("configs")
-        if not os.path.exists(config_folder):
-            os.makedirs(config_folder)
+    if not os.path.exists(config_folder):
+        os.makedirs(config_folder)
 
     filename = f"fat_tree_k{k}_topology.html"
 
@@ -53,7 +53,7 @@ def generate_topology():
     session_id = str(uuid.uuid4())
     logger.info("Starting build process with session_id: %s", session_id)
 
-    def build_topology(k, config_folder, filename, session_id):
+    def build_topology_task(k, config_folder, filename, session_id):
         try:
             # Initialize FatTree with a callback to emit messages to the specific room
             fat_tree = FatTree(
@@ -62,7 +62,6 @@ def generate_topology():
                 lambda msg, error=False: emit_message(message=msg, error=error, session_id=session_id)
             )
             fat_tree_instances[session_id] = fat_tree
-            emit_message("Starting Fat Tree build process...", session_id=session_id)
             fat_tree.build_fat_tree()
             fat_tree.generate_topology_graph_plotly()
 
@@ -82,11 +81,6 @@ def generate_topology():
         except Exception as e:
             logger.exception("Error during build process: %s", e)
             emit_message(f"Error during build: {str(e)}", error=True, session_id=session_id)
-        finally:
-            # Clean up the FatTree instance after build is complete
-            if session_id in fat_tree_instances:
-                del fat_tree_instances[session_id]
-                logger.info("Cleaned up FatTree instance for session_id: %s", session_id)
 
     def emit_message(message, error=False, complete=False, session_id=None):
         """Helper function to emit messages to the client in a specific room."""
@@ -105,10 +99,28 @@ def generate_topology():
             logger.info("Emitted message to all clients: %s", data)
 
     # Start the build process in a background task
-    socketio.start_background_task(target=build_topology, k=k, config_folder=config_folder, filename=filename, session_id=session_id)
+    socketio.start_background_task(target=build_topology_task, k=k, config_folder=config_folder, filename=filename, session_id=session_id)
 
     # Redirect to the loading screen with the unique session ID
     return redirect(url_for('loading_screen', filename=filename, session_id=session_id))
+
+@app.route('/cleanup', methods=['POST'])
+def cleanup():
+    data = request.get_json()
+    session_id = data.get('session_id')
+
+    if not session_id or session_id not in fat_tree_instances:
+        logger.error("Invalid or missing session ID for cleanup: %s", session_id)
+        return jsonify({'error': 'Invalid or missing session ID.'}), 400
+
+    fat_tree = fat_tree_instances.pop(session_id)
+    try:
+        fat_tree.cleanup()  # Assuming the cleanup method handles Docker and network cleanup
+        logger.info("Cleaned up FatTree instance for session_id: %s", session_id)
+        return jsonify({'success': True, 'message': 'Cleanup completed successfully.'})
+    except Exception as e:
+        logger.exception("Error during cleanup for session_id %s: %s", session_id, e)
+        return jsonify({'success': False, 'message': f'Cleanup failed: {str(e)}'}), 500
 
 @app.route('/loading/<filename>')
 def loading_screen(filename):
@@ -117,15 +129,20 @@ def loading_screen(filename):
         logger.error("No session_id provided in the loading_screen request.")
         return "Error: Missing session ID.", 400
     return render_template('loading.html', filename=filename, session_id=session_id)
-
+    
 @app.route('/topology/<filename>')
 def view_topology(filename):
-    return render_template('result.html', filename=filename)
+    session_id = request.args.get('session_id')
+    if not session_id:
+        logger.error("No session_id provided in the view_topology request.")
+        return "Error: Missing session ID.", 400
+    return render_template('result.html', filename=filename, session_id=session_id)
 
 @app.route('/topology_file/<filename>')
 def topology_file(filename):
     return send_from_directory(TOPOLOGY_DIR, filename)
 
+# app.py
 @app.route('/ping', methods=['POST'])
 def ping():
     data = request.get_json()
@@ -164,6 +181,16 @@ def traceroute():
     result = fat_tree.traceroute(source, destination)
     return jsonify(result)
 
+@app.route('/get_servers/<session_id>', methods=['GET'])
+def get_servers(session_id):
+    if not session_id or session_id not in fat_tree_instances:
+        logger.error("Invalid or missing session ID for get_servers: %s", session_id)
+        return jsonify({'error': 'Invalid or missing session ID.'}), 400
+
+    fat_tree = fat_tree_instances[session_id]
+    server_names = [server.name for pod in fat_tree.pods for server in pod.servers]
+    return jsonify({'servers': server_names})
+
 # Handle client connection and joining room
 @socketio.on('join')
 def handle_join(data):
@@ -181,4 +208,5 @@ def handle_disconnect():
     logger.info("Client disconnected.")
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True)
+    # Replace app.run() with socketio.run()
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True)

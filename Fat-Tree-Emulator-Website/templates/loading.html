@@ -101,9 +101,9 @@
             }
 
             if (data.complete) {
-                // Redirect to view topology after a short delay
+                // Redirect to view topology after a short delay, including session_id
                 setTimeout(function() {
-                    window.location.href = "{{ url_for('view_topology', filename=filename) }}";
+                    window.location.href = "{{ url_for('view_topology', filename=filename) }}?session_id=" + session_id;
                 }, 2000);
             }
         });

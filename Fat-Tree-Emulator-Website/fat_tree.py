@@ -259,7 +259,11 @@ class FatTree:
         """Helper method to emit messages if a callback is provided."""
         if self.message_callback:
             self.message_callback(message, error=error)
-        print(message)  # Also print to server console for debugging
+        if error:
+            print(f"ERROR: {message}")  # Distinguish error messages
+        else:
+            print(message)  # Also print to server console for debugging
+
 
     def build_fat_tree(self):
         """Build the complete fat tree topology."""
@@ -665,63 +669,57 @@ class FatTree:
         return None
 
     def ping(self, source: str, destination: str):
-        """Ping from source server to destination server.
+        """Ping from source server to destination server."""
 
-        Args:
-            source (str): Name of the source server (e.g., "S0-0-0").
-            destination (str): Name of the destination server (e.g., "S1-1-1").
-
-        Returns:
-            dict: Contains 'success' (bool) and 'output' (str) keys.
-        """
         source_server = self.find_server_by_name(source)
         destination_server = self.find_server_by_name(destination)
 
         if not source_server:
+            self.log(f"Source server '{source}' not found.", error=True)
             return {'success': False, 'output': f"Source server '{source}' not found."}
 
         if not destination_server:
+            self.log(f"Destination server '{destination}' not found.", error=True)
             return {'success': False, 'output': f"Destination server '{destination}' not found."}
 
         destination_ip = destination_server.ip  # Ensure 'ip' attribute exists
+        self.log(f"Executing ping from {source} ({source_server.ip}) to {destination} ({destination_ip})")
 
-        # Execute ping inside source server's container
         try:
             # Example: ping -c 4 destination_ip
             result = source_server.container.exec_run(f"ping -c 4 {destination_ip}", stdout=True, stderr=True)
             output = result.output.decode()
             success = result.exit_code == 0
+            self.log(f"Ping result: {output}" if success else f"Ping failed: {output}", error=not success)
             return {'success': success, 'output': output}
         except Exception as e:
+            self.log(f"Exception during ping: {str(e)}", error=True)
             return {'success': False, 'output': str(e)}
 
     def traceroute(self, source: str, destination: str):
-        """Traceroute from source server to destination server.
+        """Traceroute from source server to destination server."""
 
-        Args:
-            source (str): Name of the source server (e.g., "S0-0-0").
-            destination (str): Name of the destination server (e.g., "S1-1-1").
-
-        Returns:
-            dict: Contains 'success' (bool) and 'output' (str) keys.
-        """
         source_server = self.find_server_by_name(source)
         destination_server = self.find_server_by_name(destination)
 
         if not source_server:
+            self.log(f"Source server '{source}' not found.", error=True)
             return {'success': False, 'output': f"Source server '{source}' not found."}
 
         if not destination_server:
+            self.log(f"Destination server '{destination}' not found.", error=True)
             return {'success': False, 'output': f"Destination server '{destination}' not found."}
 
         destination_ip = destination_server.ip  # Ensure 'ip' attribute exists
+        self.log(f"Executing traceroute from {source} ({source_server.ip}) to {destination} ({destination_ip})")
 
-        # Execute traceroute inside source server's container
         try:
             # Example: traceroute destination_ip
             result = source_server.container.exec_run(f"traceroute {destination_ip}", stdout=True, stderr=True)
             output = result.output.decode()
             success = result.exit_code == 0
+            self.log(f"Traceroute result: {output}" if success else f"Traceroute failed: {output}", error=not success)
             return {'success': success, 'output': output}
         except Exception as e:
+            self.log(f"Exception during traceroute: {str(e)}", error=True)
             return {'success': False, 'output': str(e)}

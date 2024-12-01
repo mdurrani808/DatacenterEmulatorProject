@@ -83,7 +83,7 @@
             if (!data.error && !data.complete) {
                 var currentWidth = parseInt(progressBar.style.width);
                 if (currentWidth < 90) {  // Prevent reaching 100% before completion
-                    var newWidth = currentWidth + 5;
+                    var newWidth = currentWidth + 1;
                     progressBar.style.width = newWidth + '%';
                     progressBar.textContent = newWidth + '%';
                 }

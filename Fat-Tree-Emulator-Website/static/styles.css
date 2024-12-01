@@ -1,64 +1,21 @@
-/* static/styles.css */
-
 body {
-    font-family: Arial, sans-serif;
-    background-color: #f4f4f4;
-    margin: 0;
-    padding: 0;
+    background-color: #f8f9fa; /* Light gray background to match Bootstrap */
 }
 
-.container {
-    width: 90%;
-    max-width: 1200px;
-    margin: auto;
-    overflow: hidden;
-    padding: 20px;
-    background: #fff;
-    margin-top: 30px;
-    box-shadow: 0 0 10px rgba(0,0,0,0.1);
-}
-
-h1, h2 {
-    text-align: center;
-    color: #333;
-}
-
-form, .ping-form, .traceroute-form {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    margin-bottom: 20px;
-}
-
-label {
-    margin: 5px 0;
-}
-
-input[type="number"],
-input[type="text"] {
-    padding: 10px;
-    width: 200px;
-    margin-bottom: 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-}
-
-button {
-    padding: 10px 20px;
-    background: #28a745;
-    color: #fff;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-button:hover {
-    background: #218838;
+h1, h2, h3, h4 {
+    color: #343a40; /* Dark gray text for better readability */
 }
 
 pre {
-    background: #f8f9fa;
+    background-color: #f8f9fa;
     padding: 15px;
-    border: 1px solid #ddd;
+    border: 1px solid #dee2e6;
+    border-radius: 5px;
+    max-height: 400px;
     overflow-x: auto;
+}
+
+iframe {
+    border: none;
+    border-radius: 5px;
 }

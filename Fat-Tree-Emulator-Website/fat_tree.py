@@ -682,7 +682,10 @@ class FatTree:
             self.log(f"Destination server '{destination}' not found.", error=True)
             return {'success': False, 'output': f"Destination server '{destination}' not found."}
 
-        destination_ip = destination_server.ip  # Ensure 'ip' attribute exists
+        # print("TESTING!!!")
+        # print(list(source_server.connections.values())[0], list(destination_server.connections.values())[0])
+
+        destination_ip = list(destination_server.connections.values())[0] # Ensure 'ip' attribute exists
         self.log(f"Executing ping from {source} ({source_server.ip}) to {destination} ({destination_ip})")
 
         try:
@@ -710,7 +713,7 @@ class FatTree:
             self.log(f"Destination server '{destination}' not found.", error=True)
             return {'success': False, 'output': f"Destination server '{destination}' not found."}
 
-        destination_ip = destination_server.ip  # Ensure 'ip' attribute exists
+        destination_ip = list(destination_server.connections.values())[0]  # Ensure 'ip' attribute exists
         self.log(f"Executing traceroute from {source} ({source_server.ip}) to {destination} ({destination_ip})")
 
         try:
